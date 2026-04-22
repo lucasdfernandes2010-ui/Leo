@@ -1,9 +1,8 @@
 import MetaTrader5 as mt5
 import pandas as pd 
 from datetime import datetime
-import Strategy
-import ta
 import numpy as np
+import Strategy
 import time
 
 class Data:
@@ -111,15 +110,16 @@ class Evaluation:
         print(f"Profit Factor   : {profit_factor:.2f}")
         print(f"Sharpe Ratio    : {sharpe:.2f}")
 
-feed = Data("EURUSD", "D1")
-df = feed.data_from_local(pct=100, from_start=True)
+feed = Data("EURUSD", "H1")
+df = feed.data_from_local(pct=75, from_start=True)
 
 test = Strategy.MeanReversion(df)
-test_results = test.signal()
+results = test.signal()
 
-backtest = Backtest(test_results, 100_000, 0.01)
+backtest = Backtest(results, 100_000, 0.01)
 backtest_results = backtest.run()
 
 Eval = Evaluation(backtest_results)
 Eval.run()
 
+ 
