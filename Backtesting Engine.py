@@ -39,10 +39,11 @@ class Data:
 
 class Backtest:
 
-    def __init__(self, df, capital, risk):
+    def __init__(self, df, capital, risk, leverage):
         self.df = df
         self.capital = capital
         self.risk = risk
+        self.leverage = leverage
 
     def run(self):
         trades = []
@@ -50,11 +51,14 @@ class Backtest:
         for i in range(len(self.df) - 1):#entering the trade
             if self.df['signal'].iloc[i]:
                 entry = self.df['open'].iloc[i + 1] 
-                tp = self.df['tp'].iloc[i]
-                sl = self.df['sl'].iloc[i]
+                pip = 0.0001
+                tp = entry + 10 * pip
+                sl = entry - 10 * pip
 
-                sl_pip = (entry - sl) / 0.0001#position sizing
-                lot_size = self.capital / (100_000 * entry)
+                sl_pip = (entry - sl) / pip#position sizing
+                max_lots = (self.capital * self.leverage) / (100_000 * entry)
+                lot_size = (self.capital * self.risk) / (sl_pip * 10)
+                lot_size = min(max_lots, lot_size)
 
                 for j in range(i + 1, len(self.df)):#monitoring the trade
                     high = self.df['high'].iloc[j]
@@ -97,7 +101,7 @@ class Evaluation:
         max_drawdown_pct = drawdown_pct.max()
         profit_factor = wins['pnl'].sum() / abs(losses['pnl'].sum())
         df['returns'] = df['pnl'] / (df['balance'] - df['pnl'])
-        sharpe = (df['returns'].mean() / df['returns'].std()) * (252 ** 0.5)
+        sharpe = (df['returns'].mean() / df['returns'].std()) * (261 ** 0.5)
 
         print(f"Total Trades : {total_trades}")
         print(f"Win Rate     : {win_rate:.2f}%")
@@ -116,7 +120,7 @@ df = feed.data_from_local(pct=75, from_start=True)
 test = Strategy.MeanReversion(df)
 results = test.signal()
 
-backtest = Backtest(results, 100_000, 0.01)
+backtest = Backtest(results, 100_000, 0.01, 1)
 backtest_results = backtest.run()
 
 Eval = Evaluation(backtest_results)
