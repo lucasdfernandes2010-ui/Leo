@@ -27,3 +27,4 @@ class MeanReversion:
         df['signal'] = ( (df['entry'] > df['close']) & (df['close'].shift(1) > df['entry'].shift(1)))
         return df
 
+

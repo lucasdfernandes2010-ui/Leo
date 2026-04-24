@@ -1,6 +1,7 @@
 import MetaTrader5 as mt5
 import pandas as pd 
 from datetime import datetime
+import matplotlib.pyplot as plt
 import numpy as np
 import Strategy
 import time
@@ -52,27 +53,36 @@ class Backtest:
             if self.df['signal'].iloc[i]:
                 entry = self.df['open'].iloc[i + 1] 
                 pip = 0.0001
-                tp = entry + 10 * pip
-                sl = entry - 10 * pip
+                tp = entry + 50 * pip
+                sl = entry - 50 * pip
 
                 sl_pip = (entry - sl) / pip#position sizing
                 max_lots = (self.capital * self.leverage) / (100_000 * entry)
-                lot_size = (self.capital * self.risk) / (sl_pip * 10)
-                lot_size = min(max_lots, lot_size)
+                lot_size_1 = (self.capital * self.risk) / (sl_pip * 10)
+                lot_size = min(max_lots, lot_size_1)
 
                 for j in range(i + 1, len(self.df)):#monitoring the trade
                     high = self.df['high'].iloc[j]
                     low = self.df['low'].iloc[j]
+                    opens = self.df['open'].iloc[j]
 
                     if high >= tp:
                         pnl = (tp - entry) * lot_size * 100_000
+                        candles = j - i 
                         self.capital += pnl
-                        trades.append({'entry': entry, 'exit': tp, 'size': lot_size, 'pnl': pnl, 'balance': self.capital})
+                        trades.append({'entry': entry, 'exit': tp, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles, 'maxlot': max_lots, 'lotsize': lot_size_1})
                         break
                     elif low <= sl:
                         pnl = (sl - entry) * lot_size * 100_000
+                        candles = j - i 
                         self.capital += pnl
-                        trades.append({'entry': entry, 'exit': sl, 'size': lot_size, 'pnl': pnl, 'balance': self.capital})
+                        trades.append({'entry': entry, 'exit': sl, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles, 'maxlot': max_lots, 'lotsize': lot_size_1})
+                        break
+                    elif j - i == 20:
+                        pnl = (opens - entry) * lot_size * 100_000
+                        candles = j - i
+                        self.capital += pnl 
+                        trades.append({'entry': entry, 'exit': opens, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles, 'maxlot': max_lots, 'lotsize': lot_size_1})
                         break
 
         return pd.DataFrame(trades)
@@ -81,14 +91,12 @@ class Evaluation:
     def __init__(self, trades):
         self.trades = trades
 
-    def run(self):
+    def simple_metrics(self):
         df = self.trades
     
-        
         total_trades = len(df)
         wins = df[df['pnl'] > 0]
         losses = df[df['pnl'] < 0]
-        
         win_rate = len(wins) / total_trades * 100
         total_pnl = df['pnl'].sum()
         avg_win = wins['pnl'].mean()
@@ -96,12 +104,7 @@ class Evaluation:
         loss_rate = 1 - (win_rate / 100)
         expectancy = (win_rate / 100 * avg_win) + (loss_rate * avg_loss)
         breakeven_wr = abs(avg_loss) / (avg_win + abs(avg_loss)) * 100
-        rolling_peak = df['balance'].cummax()
-        drawdown_pct = (rolling_peak - df['balance']) / rolling_peak * 100
-        max_drawdown_pct = drawdown_pct.max()
-        profit_factor = wins['pnl'].sum() / abs(losses['pnl'].sum())
-        df['returns'] = df['pnl'] / (df['balance'] - df['pnl'])
-        sharpe = (df['returns'].mean() / df['returns'].std()) * (261 ** 0.5)
+        avg_candles = df['candles'].mean()
 
         print(f"Total Trades : {total_trades}")
         print(f"Win Rate     : {win_rate:.2f}%")
@@ -110,9 +113,41 @@ class Evaluation:
         print(f"Avg Loss     : {avg_loss:.2f} usd")
         print(f"Expectancy      : ${expectancy:.2f} per trade")
         print(f"Breakeven WR    : {breakeven_wr:.2f}%")
+        print(f"Avg Candles     : {avg_candles:.2f}")
+
+    def advanced_metrics(self):
+        df = self.trades
+        wins = df[df['pnl'] > 0]
+        losses = df[df['pnl'] < 0]
+
+        rolling_peak = df['balance'].cummax()
+        drawdown_pct = (rolling_peak - df['balance']) / rolling_peak * 100
+        max_drawdown_pct = drawdown_pct.max()
+        profit_factor = wins['pnl'].sum() / abs(losses['pnl'].sum())
+        df['returns'] = df['pnl'] / (df['balance'] - df['pnl'])
+        sharpe = (df['returns'].mean() / df['returns'].std()) * (len(df) ** 0.5)
+        max_loss = (losses['pnl'] / (df['balance'] - df['pnl'])).min() * 100
+        downside_returns = df['returns'].copy()
+        downside_returns[downside_returns > 0] = 0  
+        downside_std = (((downside_returns ** 2).mean()) ** 0.5)  
+        sortino = (df['returns'].mean() / downside_std) * (len(df) ** 0.5)
+
         print(f"Max Drawdown %  : {max_drawdown_pct:.2f}%")
         print(f"Profit Factor   : {profit_factor:.2f}")
         print(f"Sharpe Ratio    : {sharpe:.2f}")
+        print(f"Max Loss        : {max_loss:.2f}%")
+        print(f"Sortino Ratio   : {sortino:.2f}")
+
+    def equity_curve(self):
+        df = self.trades
+        plt.figure(figsize=(12, 5))
+        plt.plot(df.index, df['balance'], color='green', linewidth=1.5)
+        plt.title('Equity Curve')
+        plt.xlabel('Trade #')
+        plt.ylabel('Balance (USD)')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.show()
 
 feed = Data("EURUSD", "H1")
 df = feed.data_from_local(pct=75, from_start=True)
@@ -120,10 +155,10 @@ df = feed.data_from_local(pct=75, from_start=True)
 test = Strategy.MeanReversion(df)
 results = test.signal()
 
-backtest = Backtest(results, 100_000, 0.01, 1)
+backtest = Backtest(results, 100_000, 0.0025, 1)
 backtest_results = backtest.run()
 
 Eval = Evaluation(backtest_results)
-Eval.run()
+Eval.equity_curve()
 
  
