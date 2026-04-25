@@ -170,6 +170,21 @@ class Evaluation:
         plt.tight_layout()
         plt.show()
 
+    def final_metrics(self):
+        df = self.trades
+    
+        total_trades = len(df)
+        wins = df[df['pnl'] > 0]
+        losses = df[df['pnl'] < 0]
+        win_rate = len(wins) / total_trades * 100
+        total_pnl = df['pnl'].sum()
+        avg_win = wins['pnl'].mean()
+        avg_loss = losses['pnl'].mean()
+        loss_rate = 1 - (win_rate / 100)
+        expectancy = (win_rate / 100 * avg_win) + (loss_rate * avg_loss)
+
+        return expectancy
+
 class Execute:
 
     def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, params):
@@ -182,7 +197,7 @@ class Execute:
         self.leverage = leverage
         self.spread = spread
         self.commission = commission
-        self.max_candle = params['max_candle']
+        self.max_candle = params['max_candle'][0]
         self.params = params
 
     def run(self):
@@ -198,18 +213,29 @@ class Execute:
         years = backtest.total_time()
 
         Eval = Evaluation(backtest_results, candles, years)
-        Eval.simple_metrics()
+        Eval.final_metrics()
  
 params = {
-    'sma_window': 14,
-    'std_window': 14,
-    'entry_std': 2.0,
-    'tp_pip': 50,
-    'sl_pip': 50,
-    'max_candle': 20
+    'sma_window':  [14, 20, 2],
+    'std_window':  [14, 20, 2],
+    'entry_std':   [2.0, 3.0, 0.5],
+    'tp_pip':      [50, 70, 10],
+    'sl_pip':      [50, 70, 10],
+    'max_candle':  [20, 30, 5],
 }
 
 #symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, params
 
 Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 1.5, 3.5, params)
 Exec.run()
+
+class Optimizer:
+
+    def __init__(self, params):
+        self.sma_window = params['sma_window']
+        self.std_window = params['std_window']
+        self.entry_std = params['entry_std']
+        self.max_candle = params['max_candle']
+        self.tp_pip = params['tp_pip']
+        self.sl_pip = params['sl_pip']
+

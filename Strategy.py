@@ -19,11 +19,11 @@ class Emacross:
 class MeanReversion:
     def __init__(self, df, params):
         self.df = df
-        self.sma_window = params['sma_window']
-        self.std_window = params['std_window']
-        self.entry_std = params['entry_std']
-        self.tp_pip = params['tp_pip']
-        self.sl_pip = params['sl_pip']
+        self.sma_window = params['sma_window'][0]
+        self.std_window = params['std_window'][0]
+        self.entry_std = params['entry_std'][0]
+        self.tp_pip = params['tp_pip'][0]
+        self.sl_pip = params['sl_pip'][0]
 
     def signal(self):
         df = self.df
