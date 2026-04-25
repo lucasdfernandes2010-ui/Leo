@@ -40,19 +40,22 @@ class Data:
 
 class Backtest:
 
-    def __init__(self, df, capital, risk, leverage, max_candle):
+    def __init__(self, df, capital, risk, leverage, max_candle, spread, commission):
         self.df = df
         self.capital = capital
         self.risk = risk
         self.leverage = leverage
         self.max_candle = max_candle
+        self.spread = spread
+        self.commission = commission
 
     def run(self):
         trades = []
         for i in range(len(self.df) - 1):#entering the trade
             if self.df['signal'].iloc[i]:
-                entry = self.df['open'].iloc[i + 1] 
                 pip = 0.0001
+                spread = self.spread * pip
+                entry = self.df['open'].iloc[i + 1] + spread
                 tp = entry + self.df['tp_pip'].iloc[i] * pip
                 sl = entry - self.df['sl_pip'].iloc[i] * pip
 
@@ -68,18 +71,24 @@ class Backtest:
 
                     if high >= tp:#exiting the trade
                         pnl = (tp - entry) * lot_size * 100_000
+                        cost = self.commission * lot_size
+                        pnl -= cost
                         candles = j - i 
                         self.capital += pnl
                         trades.append({'entry': entry, 'exit': tp, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles})
                         break
                     elif low <= sl:
                         pnl = (sl - entry) * lot_size * 100_000
+                        cost = self.commission * lot_size
+                        pnl -= cost
                         candles = j - i 
                         self.capital += pnl
                         trades.append({'entry': entry, 'exit': sl, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles})
                         break
                     elif j - i == self.max_candle:
                         pnl = (opens - entry) * lot_size * 100_000
+                        cost = self.commission * lot_size
+                        pnl -= cost
                         candles = j - i
                         self.capital += pnl 
                         trades.append({'entry': entry, 'exit': opens, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles})
@@ -163,7 +172,7 @@ class Evaluation:
 
 class Execute:
 
-    def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, max_candle, params):
+    def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, params):
         self.symbol = symbol
         self.timeframe = timeframe
         self.pct = pct
@@ -171,7 +180,9 @@ class Execute:
         self.capital = capital
         self.risk = risk
         self.leverage = leverage
-        self.max_candle = max_candle
+        self.spread = spread
+        self.commission = commission
+        self.max_candle = params['max_candle']
         self.params = params
 
     def run(self):
@@ -181,7 +192,7 @@ class Execute:
         test = Strategy.MeanReversion(df, self.params)
         results = test.signal()
 
-        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.max_candle)
+        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.max_candle, self.spread, self.commission)
         backtest_results = backtest.run()
         candles = backtest.total_candles()
         years = backtest.total_time()
@@ -194,8 +205,11 @@ params = {
     'std_window': 14,
     'entry_std': 2.0,
     'tp_pip': 50,
-    'sl_pip': 50
+    'sl_pip': 50,
+    'max_candle': 20
 }
 
-Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 20, params)
+#symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, params
+
+Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 1.5, 3.5, params)
 Exec.run()
