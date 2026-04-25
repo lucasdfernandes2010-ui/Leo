@@ -53,8 +53,8 @@ class Backtest:
             if self.df['signal'].iloc[i]:
                 entry = self.df['open'].iloc[i + 1] 
                 pip = 0.0001
-                tp = entry + 50 * pip
-                sl = entry - 50 * pip
+                tp = entry + self.df['tp_pip'].iloc[i] * pip
+                sl = entry - self.df['sl_pip'].iloc[i] * pip
 
                 sl_pip = (entry - sl) / pip#position sizing
                 max_lots = (self.capital * self.leverage) / (100_000 * entry)
@@ -70,19 +70,19 @@ class Backtest:
                         pnl = (tp - entry) * lot_size * 100_000
                         candles = j - i 
                         self.capital += pnl
-                        trades.append({'entry': entry, 'exit': tp, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles, 'maxlot': max_lots, 'lotsize': lot_size_1})
+                        trades.append({'entry': entry, 'exit': tp, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles})
                         break
                     elif low <= sl:
                         pnl = (sl - entry) * lot_size * 100_000
                         candles = j - i 
                         self.capital += pnl
-                        trades.append({'entry': entry, 'exit': sl, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles, 'maxlot': max_lots, 'lotsize': lot_size_1})
+                        trades.append({'entry': entry, 'exit': sl, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles})
                         break
                     elif j - i == 20:
                         pnl = (opens - entry) * lot_size * 100_000
                         candles = j - i
                         self.capital += pnl 
-                        trades.append({'entry': entry, 'exit': opens, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles, 'maxlot': max_lots, 'lotsize': lot_size_1})
+                        trades.append({'entry': entry, 'exit': opens, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles})
                         break
 
         return pd.DataFrame(trades)
@@ -149,16 +149,38 @@ class Evaluation:
         plt.tight_layout()
         plt.show()
 
-feed = Data("EURUSD", "H1")
-df = feed.data_from_local(pct=75, from_start=True)
+class Execute:
 
-test = Strategy.MeanReversion(df)
-results = test.signal()
+    def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, params):
+        self.symbol = symbol
+        self.timeframe = timeframe
+        self.pct = pct
+        self.from_start = from_start
+        self.capital = capital
+        self.risk = risk
+        self.leverage = leverage
+        self.params = params
 
-backtest = Backtest(results, 100_000, 0.0025, 1)
-backtest_results = backtest.run()
+    def run(self):
+        feed = Data(self.symbol, self.timeframe)
+        df = feed.data_from_local(pct=self.pct, from_start=self.from_start)
 
-Eval = Evaluation(backtest_results)
-Eval.equity_curve()
+        test = Strategy.MeanReversion(df, self.params)
+        results = test.signal()
 
+        backtest = Backtest(results, self.capital, self.risk, self.leverage)
+        backtest_results = backtest.run()
+
+        Eval = Evaluation(backtest_results)
+        Eval.simple_metrics()
  
+params = {
+    'sma_window': 14,
+    'std_window': 14,
+    'entry_std': 2.0,
+    'tp_pip': 50,
+    'sl_pip': 50
+}
+
+Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, params)
+Exec.run()
