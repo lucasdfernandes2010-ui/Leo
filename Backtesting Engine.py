@@ -40,15 +40,15 @@ class Data:
 
 class Backtest:
 
-    def __init__(self, df, capital, risk, leverage):
+    def __init__(self, df, capital, risk, leverage, max_candle):
         self.df = df
         self.capital = capital
         self.risk = risk
         self.leverage = leverage
+        self.max_candle = max_candle
 
     def run(self):
         trades = []
-
         for i in range(len(self.df) - 1):#entering the trade
             if self.df['signal'].iloc[i]:
                 entry = self.df['open'].iloc[i + 1] 
@@ -66,7 +66,7 @@ class Backtest:
                     low = self.df['low'].iloc[j]
                     opens = self.df['open'].iloc[j]
 
-                    if high >= tp:
+                    if high >= tp:#exiting the trade
                         pnl = (tp - entry) * lot_size * 100_000
                         candles = j - i 
                         self.capital += pnl
@@ -78,7 +78,7 @@ class Backtest:
                         self.capital += pnl
                         trades.append({'entry': entry, 'exit': sl, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles})
                         break
-                    elif j - i == 20:
+                    elif j - i == self.max_candle:
                         pnl = (opens - entry) * lot_size * 100_000
                         candles = j - i
                         self.capital += pnl 
@@ -87,9 +87,21 @@ class Backtest:
 
         return pd.DataFrame(trades)
 
+    def total_candles(self):
+        return len(self.df)
+
+    def total_time(self):
+        start = self.df['time'].iloc[0]
+        end = self.df['time'].iloc[-1]
+        delta = end - start
+        years = round(delta.days / 365, 2)
+        return years
+
 class Evaluation:
-    def __init__(self, trades):
+    def __init__(self, trades, candles, years):
         self.trades = trades
+        self.candles = candles
+        self.years = years
 
     def simple_metrics(self):
         df = self.trades
@@ -151,7 +163,7 @@ class Evaluation:
 
 class Execute:
 
-    def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, params):
+    def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, max_candle, params):
         self.symbol = symbol
         self.timeframe = timeframe
         self.pct = pct
@@ -159,6 +171,7 @@ class Execute:
         self.capital = capital
         self.risk = risk
         self.leverage = leverage
+        self.max_candle = max_candle
         self.params = params
 
     def run(self):
@@ -168,10 +181,12 @@ class Execute:
         test = Strategy.MeanReversion(df, self.params)
         results = test.signal()
 
-        backtest = Backtest(results, self.capital, self.risk, self.leverage)
+        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.max_candle)
         backtest_results = backtest.run()
+        candles = backtest.total_candles()
+        years = backtest.total_time()
 
-        Eval = Evaluation(backtest_results)
+        Eval = Evaluation(backtest_results, candles, years)
         Eval.simple_metrics()
  
 params = {
@@ -182,5 +197,5 @@ params = {
     'sl_pip': 50
 }
 
-Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, params)
+Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 20, params)
 Exec.run()

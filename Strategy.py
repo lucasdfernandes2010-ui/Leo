@@ -1,4 +1,5 @@
 import ta
+import pandas as pd 
 
 class Emacross:
 
@@ -34,5 +35,4 @@ class MeanReversion:
         df['tp_pip'] = self.tp_pip
         df['sl_pip'] = self.sl_pip
         return df
-
 
