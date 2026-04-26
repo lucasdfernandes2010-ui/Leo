@@ -216,18 +216,17 @@ class Execute:
         Eval.final_metrics()
  
 params = {
-    'sma_window':  [14, 20, 2],
-    'std_window':  [14, 20, 2],
-    'entry_std':   [2.0, 3.0, 0.5],
-    'tp_pip':      [50, 70, 10],
-    'sl_pip':      [50, 70, 10],
-    'max_candle':  [20, 30, 5],
+    'sma_window':  [10, 50, 5],
+    'std_window':  [10, 50, 5],
+    'entry_std':   [1, 4.0, 0.5],
+    'tp_pip':      [20, 70, 5],
+    'sl_pip':      [20, 70, 5],
+    'max_candle':  [10, 30, 5],
 }
 
 #symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, params
-
-Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 1.5, 3.5, params)
-Exec.run()
+#Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 1.5, 3.5, params)
+#Exec.run()
 
 class Optimizer:
 
@@ -238,4 +237,29 @@ class Optimizer:
         self.max_candle = params['max_candle']
         self.tp_pip = params['tp_pip']
         self.sl_pip = params['sl_pip']
+        self.params = params
 
+    def grid_maker(self):
+        ls = list(self.params.keys())
+        final_grid = {}
+        for i in range(len(ls)):
+            grid = []
+            mini = self.params[ls[i]][0]
+            maxi = self.params[ls[i]][1]
+            step = self.params[ls[i]][2]
+
+            if (maxi - mini) % step == 0: 
+                grid.append(mini)
+                while maxi != mini:
+                    mini += step
+                    grid.append(mini)
+            else:
+                print(f'wrong steps for {ls[i]}')
+
+            final_grid[ls[i]] = grid 
+
+        return final_grid
+
+Opt = Optimizer(params)
+bn = Opt.grid_maker()
+print(bn)
