@@ -1,8 +1,9 @@
 import MetaTrader5 as mt5
 import pandas as pd 
-from datetime import datetime
+import random
 import matplotlib.pyplot as plt
 import numpy as np
+import itertools
 import Strategy
 import time
 
@@ -40,12 +41,11 @@ class Data:
 
 class Backtest:
 
-    def __init__(self, df, capital, risk, leverage, max_candle, spread, commission):
+    def __init__(self, df, capital, risk, leverage, spread, commission):
         self.df = df
         self.capital = capital
         self.risk = risk
         self.leverage = leverage
-        self.max_candle = max_candle
         self.spread = spread
         self.commission = commission
 
@@ -56,8 +56,8 @@ class Backtest:
                 pip = 0.0001
                 spread = self.spread * pip
                 entry = self.df['open'].iloc[i + 1] + spread
-                tp = entry + self.df['tp_pip'].iloc[i] * pip
-                sl = entry - self.df['sl_pip'].iloc[i] * pip
+                tp = entry + self.df['tp_pip'].iloc[0] * pip
+                sl = entry - self.df['sl_pip'].iloc[0] * pip
 
                 sl_pip = (entry - sl) / pip#position sizing
                 max_lots = (self.capital * self.leverage) / (100_000 * entry)
@@ -85,7 +85,7 @@ class Backtest:
                         self.capital += pnl
                         trades.append({'entry': entry, 'exit': sl, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles})
                         break
-                    elif j - i == self.max_candle:
+                    elif j - i == self.df['max_candle'].iloc[0]:
                         pnl = (opens - entry) * lot_size * 100_000
                         cost = self.commission * lot_size
                         pnl -= cost
@@ -197,7 +197,6 @@ class Execute:
         self.leverage = leverage
         self.spread = spread
         self.commission = commission
-        self.max_candle = params['max_candle'][0]
         self.params = params
 
     def run(self):
@@ -207,36 +206,19 @@ class Execute:
         test = Strategy.MeanReversion(df, self.params)
         results = test.signal()
 
-        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.max_candle, self.spread, self.commission)
+        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission)
         backtest_results = backtest.run()
+        if len(backtest_results) == 0:
+            return -999
         candles = backtest.total_candles()
         years = backtest.total_time()
 
         Eval = Evaluation(backtest_results, candles, years)
-        Eval.final_metrics()
+        return Eval.final_metrics()
  
-params = {
-    'sma_window':  [10, 50, 5],
-    'std_window':  [10, 50, 5],
-    'entry_std':   [1, 4.0, 0.5],
-    'tp_pip':      [20, 70, 5],
-    'sl_pip':      [20, 70, 5],
-    'max_candle':  [10, 30, 5],
-}
-
-#symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, params
-#Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 1.5, 3.5, params)
-#Exec.run()
-
 class Optimizer:
 
     def __init__(self, params):
-        self.sma_window = params['sma_window']
-        self.std_window = params['std_window']
-        self.entry_std = params['entry_std']
-        self.max_candle = params['max_candle']
-        self.tp_pip = params['tp_pip']
-        self.sl_pip = params['sl_pip']
         self.params = params
 
     def grid_maker(self):
@@ -260,6 +242,64 @@ class Optimizer:
 
         return final_grid
 
+    def new_params(self, grid, indices):
+        params = {}
+        for key in grid:
+            params[key] = grid[key][indices[key]]
+        return params
+
+    def index_range(self, grid):
+        ranges = {}
+        for key in grid:
+            ranges[key] = list(range(len(grid[key])))
+        return ranges
+
+    def index(self, grid, ls):
+        indices = {}
+        i = 0 
+        for key in grid:
+            indices[key] = ls[i]
+            i += 1
+
+        return indices 
+
+    def run(self):
+        final_grid = self.grid_maker()
+        ranges = self.index_range(final_grid)
+        combos = list(itertools.product(*ranges.values()))
+
+        best_params = None
+        best_score = -999
+
+        for i in range(100):
+            indices = {}
+            for key in ranges:
+                random_index = random.choice(ranges[key])
+                indices[key] = random_index
+            params = self.new_params(final_grid, indices)
+            #symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, params
+            Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 1.5, 3.5, params)
+            score = Exec.run()
+
+            if score > best_score:
+                best_score = score
+                best_params = params
+
+            print(i)
+
+        return best_params, best_score
+
+params = {
+    'sma_window':  [10, 50, 5],
+    'std_window':  [10, 50, 5],
+    'entry_std':   [1, 4.0, 0.5],
+    'tp_pip':      [20, 70, 5],
+    'sl_pip':      [20, 70, 5],
+    'max_candle':  [10, 30, 5],
+}
+
 Opt = Optimizer(params)
-bn = Opt.grid_maker()
-print(bn)
+params, score = Opt.run()
+print(params)
+print(score)
+
