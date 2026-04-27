@@ -170,7 +170,7 @@ class Evaluation:
         plt.tight_layout()
         plt.show()
 
-    def final_metrics(self):
+    def metric_for_optimizer(self):
         df = self.trades
     
         total_trades = len(df)
@@ -199,7 +199,7 @@ class Execute:
         self.commission = commission
         self.params = params
 
-    def run(self):
+    def run_for_optimizer(self):
         feed = Data(self.symbol, self.timeframe)
         df = feed.data_from_local(pct=self.pct, from_start=self.from_start)
 
@@ -208,14 +208,33 @@ class Execute:
 
         backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission)
         backtest_results = backtest.run()
+
         if len(backtest_results) == 0:
             return -999
+
         candles = backtest.total_candles()
         years = backtest.total_time()
 
         Eval = Evaluation(backtest_results, candles, years)
-        return Eval.final_metrics()
- 
+        return Eval.metric_for_optimizer()
+
+    def run_for_testing(self):
+        feed = Data(self.symbol, self.timeframe)
+        df = feed.data_from_local(pct=self.pct, from_start=self.from_start)
+
+        test = Strategy.MeanReversion(df, self.params)
+        results = test.signal()
+
+        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission)
+        backtest_results = backtest.run()
+        candles = backtest.total_candles()
+        years = backtest.total_time()
+        
+        Eval = Evaluation(backtest_results, candles, years)
+        Eval.simple_metrics()
+        Eval.advanced_metrics()
+        Eval.equity_curve()
+
 class Optimizer:
 
     def __init__(self, params):
@@ -263,15 +282,14 @@ class Optimizer:
 
         return indices 
 
-    def run(self):
+    def run(self, runs):
         final_grid = self.grid_maker()
         ranges = self.index_range(final_grid)
-        combos = list(itertools.product(*ranges.values()))
 
         best_params = None
         best_score = -999
 
-        for i in range(100):
+        for i in range(runs):
             indices = {}
             for key in ranges:
                 random_index = random.choice(ranges[key])
@@ -279,7 +297,7 @@ class Optimizer:
             params = self.new_params(final_grid, indices)
             #symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, params
             Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 1.5, 3.5, params)
-            score = Exec.run()
+            score = Exec.run_for_optimizer()
 
             if score > best_score:
                 best_score = score
@@ -290,16 +308,19 @@ class Optimizer:
         return best_params, best_score
 
 params = {
-    'sma_window':  [10, 50, 5],
-    'std_window':  [10, 50, 5],
-    'entry_std':   [1, 4.0, 0.5],
-    'tp_pip':      [20, 70, 5],
+    'sma_window':  [10, 30, 5],
+    'std_window':  [10, 20, 2],
+    'entry_std':   [1, 2.5, 0.5],
+    'tp_pip':      [20, 170, 5],
     'sl_pip':      [20, 70, 5],
     'max_candle':  [10, 30, 5],
 }
 
 Opt = Optimizer(params)
-params, score = Opt.run()
+params, score = Opt.run(100)
 print(params)
 print(score)
 
+#symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, params
+Exec = Execute("EURUSD", "H1", 25, False, 100_000, 0.0025, 1, 1.5, 3.5, params)
+score = Exec.run_for_testing()
