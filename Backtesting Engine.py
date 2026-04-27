@@ -3,17 +3,63 @@ import pandas as pd
 import random
 import matplotlib.pyplot as plt
 import numpy as np
-import itertools
 import Strategy
 import time
 
+"""
+The name of this project is Leo
+
+Leo:
+
+    Data Class:
+        data_from_api()
+        data_from_local()
+
+    Strategy Class:
+        signal()
+
+    Backtest Class:
+        enter_trade()
+        position_sizing()
+        monitor_trade()
+        exit_trade()
+        run()
+        total_time()
+        total_candles()
+
+    Evaluation Class:
+        simple_metrics()
+        advanced_metrics()
+        equity_curve()
+        metric_for_optimizer()
+
+    Execute Class:
+        run_for_optimizer()
+        run_for_user()
+
+    Optimizer Class:
+        grid_maker()
+        new_params()
+        index_range()
+        run()
+
+"""
+
 class Data:
-    
+    """ 
+    Gets data from sources
+    Returns a df(data) to Strategy Class
+    """
+
     def __init__(self, symbol, timeframe):
         self.symbol = symbol
         self.timeframe = timeframe
 
     def data_from_api(self, timeframe, start, end):
+        """ 
+        This gets data from MT5 api 
+        You can access data by date
+        """
         mt5.initialize()
         rates = mt5.copy_rates_range(self.symbol, timeframe, start, end)
         df = pd.DataFrame(rates)
@@ -24,7 +70,12 @@ class Data:
         return df
 
     def data_from_local(self, pct=100, from_start=False):
-
+        """ 
+        This gets data from local storage (data is stored in parquet files)
+        You can access this data by a % of the total data available in local storage
+        for the selected symbol and timeframe
+        You can access a % from the start or the end
+        """
         path = f"Data/{self.symbol}/{self.symbol}_{self.timeframe}.parquet"
         df = pd.read_parquet(path)
         n = int(len(df) * pct / 100)
@@ -40,6 +91,12 @@ class Data:
         return df
 
 class Backtest:
+    """
+    It takes the df with signals given by Strategy class and backtests
+    with risk, leverage, capital, spread, and commision that can be modified
+    It gives a new df of trades backtested with entry, exit, size, 
+    capital(after trade), and candles to Evaluation Class
+    """
 
     def __init__(self, df, capital, risk, leverage, spread, commission):
         self.df = df
@@ -48,58 +105,103 @@ class Backtest:
         self.leverage = leverage
         self.spread = spread
         self.commission = commission
+        self.pip = 0.0001
+
+    def enter_trade(self, i):
+        """
+        It takes i(the candle u detect a trade opportunity)
+        It enters the trade 
+        It calculates entry, tp, sl
+        """
+        spread = self.spread * self.pip
+        entry = self.df['open'].iloc[i + 1] + spread
+        tp = entry + self.df['tp_pip'].iloc[0] * self.pip
+        sl = entry - self.df['sl_pip'].iloc[0] * self.pip
+        return entry, sl, tp
+
+    def position_sizing(self, entry, sl):
+        """
+        It takes entry and sl from enter_trade()
+        It calculates the lot size
+        Max_lots is calculated with risk and leverage
+        Lot_size cannot be greater than max_lots
+        """
+        sl_pip = (entry - sl) / self.pip
+        max_lots = (self.capital * self.leverage) / (100_000 * entry)
+        lot_size = (self.capital * self.risk) / (sl_pip * 10)
+        lot_size = min(max_lots, lot_size)
+        return lot_size
+
+    def monitor_trade(self, i, entry, tp, sl, lot_size):
+        """
+        It takes entry, tp, sl from enter_trade()
+        It takes lot_size from position_sizing()
+        It takes i from the for loop in Backtest.run()
+        It monitors the trade 
+        If high of a candle is greater than tp, it counts it as a win
+        If low if a candle is lesser than sl, it counts it as a loss
+        If the trade didnt close after max_candle(int) candles, it closes
+        It closes all trade with exit_trade()
+        """
+        for j in range(i + 1, len(self.df)):
+            high = self.df['high'].iloc[j]
+            low = self.df['low'].iloc[j]
+            opens = self.df['open'].iloc[j]
+
+            if high >= tp:
+                return self.exit_trade(entry, tp, lot_size, j, i)
+
+            elif low <= sl:
+                return self.exit_trade(entry, sl, lot_size, j, i)
+
+            elif j - i == self.df['max_candle'].iloc[0]:
+                return self.exit_trade(entry, opens, lot_size, j, i)
+
+    def exit_trade(self, entry, exit_price, lot_size, j, i):
+        """
+        It takes entry from enter_trade()
+        It takes lot_size from position_sizing()
+        It takes exit_price, j, i from monitor_trade
+        It exits the trade
+        Calculates the pnl(subtracts cost) and adds it to capital
+        Returns entry, exit, size, pnl, balance, candles to Backtest.run()
+        """
+        pnl = (exit_price - entry) * lot_size * 100_000
+        cost = self.commission * lot_size
+        pnl -= cost
+        candles = j - i
+        self.capital += pnl
+        return {'entry': entry, 'exit': exit_price, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles}
 
     def run(self):
+        """
+        It connects enter_trade(), position_sizing(), 
+        monitor_trade, exit_trade() so they all work together
+        It appends the trade data given by exit_trade() to a new df
+        Returns the new df with the trade data
+        """
         trades = []
-        for i in range(len(self.df) - 1):#entering the trade
+        for i in range(len(self.df) - 1):
             if self.df['signal'].iloc[i]:
-                pip = 0.0001
-                spread = self.spread * pip
-                entry = self.df['open'].iloc[i + 1] + spread
-                tp = entry + self.df['tp_pip'].iloc[0] * pip
-                sl = entry - self.df['sl_pip'].iloc[0] * pip
-
-                sl_pip = (entry - sl) / pip#position sizing
-                max_lots = (self.capital * self.leverage) / (100_000 * entry)
-                lot_size_1 = (self.capital * self.risk) / (sl_pip * 10)
-                lot_size = min(max_lots, lot_size_1)
-
-                for j in range(i + 1, len(self.df)):#monitoring the trade
-                    high = self.df['high'].iloc[j]
-                    low = self.df['low'].iloc[j]
-                    opens = self.df['open'].iloc[j]
-
-                    if high >= tp:#exiting the trade
-                        pnl = (tp - entry) * lot_size * 100_000
-                        cost = self.commission * lot_size
-                        pnl -= cost
-                        candles = j - i 
-                        self.capital += pnl
-                        trades.append({'entry': entry, 'exit': tp, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles})
-                        break
-                    elif low <= sl:
-                        pnl = (sl - entry) * lot_size * 100_000
-                        cost = self.commission * lot_size
-                        pnl -= cost
-                        candles = j - i 
-                        self.capital += pnl
-                        trades.append({'entry': entry, 'exit': sl, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles})
-                        break
-                    elif j - i == self.df['max_candle'].iloc[0]:
-                        pnl = (opens - entry) * lot_size * 100_000
-                        cost = self.commission * lot_size
-                        pnl -= cost
-                        candles = j - i
-                        self.capital += pnl 
-                        trades.append({'entry': entry, 'exit': opens, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles})
-                        break
-
+                entry, sl, tp = self.enter_trade(i)
+                lot_size = self.position_sizing(entry, sl)
+                trade = self.monitor_trade(i, entry, tp, sl, lot_size)
+                if trade:
+                    trades.append(trade)
         return pd.DataFrame(trades)
 
     def total_candles(self):
+        """
+        It returns the total number of candles 
+        in the df(given by Strategy class)
+        """
         return len(self.df)
 
     def total_time(self):
+        """
+        It returns the total time in years 
+        in the df(given by Strategy class)
+        """
         start = self.df['time'].iloc[0]
         end = self.df['time'].iloc[-1]
         delta = end - start
@@ -107,12 +209,24 @@ class Backtest:
         return years
 
 class Evaluation:
+    """
+    It takes the df of trades, total candles, time in years
+    from Backtest class and returns metrics and graphs for
+    Optimizer class and for the user
+    """
+
     def __init__(self, trades, candles, years):
         self.trades = trades
         self.candles = candles
         self.years = years
 
     def simple_metrics(self):
+        """
+        It returns metrics like
+        Total trades, Win rate, Total pnl,
+        Avg win, Avg loss, Expectancy,
+        Breakeven winrate and Avg candles.
+        """
         df = self.trades
     
         total_trades = len(df)
@@ -137,6 +251,11 @@ class Evaluation:
         print(f"Avg Candles     : {avg_candles:.2f}")
 
     def advanced_metrics(self):
+        """
+        It returns metrics like
+        Max Drawdown, Profit Factor, Sharpe Ratio,
+        Max Loss and Sortino Ratio.
+        """
         df = self.trades
         wins = df[df['pnl'] > 0]
         losses = df[df['pnl'] < 0]
@@ -160,6 +279,10 @@ class Evaluation:
         print(f"Sortino Ratio   : {sortino:.2f}")
 
     def equity_curve(self):
+        """
+        It returns a graph of equity curve
+        (USD vs No. of Trades)
+        """
         df = self.trades
         plt.figure(figsize=(12, 5))
         plt.plot(df.index, df['balance'], color='green', linewidth=1.5)
@@ -171,6 +294,10 @@ class Evaluation:
         plt.show()
 
     def metric_for_optimizer(self):
+        """
+        It gives one metric(expectancy) 
+        that Optmizer class will optimize
+        """
         df = self.trades
     
         total_trades = len(df)
@@ -186,6 +313,15 @@ class Evaluation:
         return expectancy
 
 class Execute:
+    """
+    It connects Data class , Strategy class
+    Backtest class and Evaluation class to 
+    run together
+    It makes it easier for the optmizer and 
+    the user to Backtest
+    It takes all the parameters the other 
+    classes take
+    """
 
     def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, params):
         self.symbol = symbol
@@ -200,6 +336,10 @@ class Execute:
         self.params = params
 
     def run_for_optimizer(self):
+        """
+        It Executes for the optmizer and 
+        returns metric_for_optimizer()
+        """
         feed = Data(self.symbol, self.timeframe)
         df = feed.data_from_local(pct=self.pct, from_start=self.from_start)
 
@@ -218,7 +358,12 @@ class Execute:
         Eval = Evaluation(backtest_results, candles, years)
         return Eval.metric_for_optimizer()
 
-    def run_for_testing(self):
+    def run_for_user(self):
+        """
+        It Executes for the user and returns
+        simple_metric(), advanced_metric(),
+        and equity_curve()
+        """
         feed = Data(self.symbol, self.timeframe)
         df = feed.data_from_local(pct=self.pct, from_start=self.from_start)
 
@@ -236,11 +381,26 @@ class Execute:
         Eval.equity_curve()
 
 class Optimizer:
+    """
+    It takes params 
+    Params is a dict with keys as the parameters
+    that need to be optimized
+
+    The values of Params is a list which work like
+    [min, max, step] , this allows us to make a grid
+    of parameters and check which combination from 
+    the grid returns the greatest metric_for_optimizer
+
+    Optmizer works with random search
+    """
 
     def __init__(self, params):
         self.params = params
 
     def grid_maker(self):
+        """
+        It makes a grid of parameters called final_grid
+        """
         ls = list(self.params.keys())
         final_grid = {}
         for i in range(len(ls)):
@@ -262,27 +422,48 @@ class Optimizer:
         return final_grid
 
     def new_params(self, grid, indices):
+        """
+        It takes final_grid from grid_maker()
+        and indices from run()
+        indices is a dict with keys same as final_grid
+        and values(single number) generated in 
+        Optimizer.run() by random search
+
+        Strategy class only expects params with values 
+        in the form of single number
+
+        So new_params converts the grid and indices
+        into params with values in the form of a 
+        single number
+        """
         params = {}
         for key in grid:
             params[key] = grid[key][indices[key]]
         return params
 
     def index_range(self, grid):
+        """
+        It takes final_grid from grid_maker()
+        It makes a new dict called ranges
+        with keys same as the original params
+        Values of ranges is a list of indices
+        These indices are the length of values 
+        of each parameter from final_grid
+        Ranges help random search picking a 
+        random index in Optimize.run()
+        """
         ranges = {}
         for key in grid:
             ranges[key] = list(range(len(grid[key])))
         return ranges
 
-    def index(self, grid, ls):
-        indices = {}
-        i = 0 
-        for key in grid:
-            indices[key] = ls[i]
-            i += 1
-
-        return indices 
-
     def run(self, runs):
+        """
+        It takes runs(no. of backtests to optimize) by the user
+        It connects grid_maker(), index_range(),
+        and new_params() to optimize parameters
+        It returns best_params and best_score
+        """
         final_grid = self.grid_maker()
         ranges = self.index_range(final_grid)
 
@@ -294,6 +475,7 @@ class Optimizer:
             for key in ranges:
                 random_index = random.choice(ranges[key])
                 indices[key] = random_index
+
             params = self.new_params(final_grid, indices)
             #symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, params
             Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 1.5, 3.5, params)
@@ -317,10 +499,10 @@ params = {
 }
 
 Opt = Optimizer(params)
-params, score = Opt.run(100)
+params, score = Opt.run(1)
 print(params)
 print(score)
 
 #symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, params
 Exec = Execute("EURUSD", "H1", 25, False, 100_000, 0.0025, 1, 1.5, 3.5, params)
-score = Exec.run_for_testing()
+score = Exec.run_for_user()
