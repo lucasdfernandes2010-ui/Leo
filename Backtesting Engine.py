@@ -32,6 +32,7 @@ Leo:
         advanced_metrics()
         equity_curve()
         metric_for_optimizer()
+        benchmark()
 
     Execute Class:
         run_for_optimizer()
@@ -98,23 +99,26 @@ class Backtest:
     capital(after trade), and candles to Evaluation Class
     """
 
-    def __init__(self, df, capital, risk, leverage, spread, commission):
+    def __init__(self, df, capital, risk, leverage, spread, commission, slippage):
         self.df = df
         self.capital = capital
         self.risk = risk
         self.leverage = leverage
         self.spread = spread
         self.commission = commission
+        self.slippage = slippage
         self.pip = 0.0001
 
     def enter_trade(self, i):
         """
         It takes i(the candle u detect a trade opportunity)
         It enters the trade 
+        It adds spread and random slippage
         It calculates entry, tp, sl
         """
         spread = self.spread * self.pip
-        entry = self.df['open'].iloc[i + 1] + spread
+        slippage = random.uniform(0, self.slippage) * self.pip
+        entry = self.df['open'].iloc[i + 1] + spread + slippage
         tp = entry + self.df['tp_pip'].iloc[0] * self.pip
         sl = entry - self.df['sl_pip'].iloc[0] * self.pip
         return entry, sl, tp
@@ -148,14 +152,17 @@ class Backtest:
             low = self.df['low'].iloc[j]
             opens = self.df['open'].iloc[j]
 
-            if high >= tp:
-                return self.exit_trade(entry, tp, lot_size, j, i)
+            if j - i == self.df['max_candle'].iloc[0]:
+                return self.exit_trade(entry, opens, lot_size, j, i)
+
+            elif high >= tp and low <= sl:
+                return self.exit_trade(entry, sl, lot_size, j, i)
 
             elif low <= sl:
                 return self.exit_trade(entry, sl, lot_size, j, i)
 
-            elif j - i == self.df['max_candle'].iloc[0]:
-                return self.exit_trade(entry, opens, lot_size, j, i)
+            elif high >= tp:
+                return self.exit_trade(entry, tp, lot_size, j, i)
 
     def exit_trade(self, entry, exit_price, lot_size, j, i):
         """
@@ -171,7 +178,14 @@ class Backtest:
         pnl -= cost
         candles = j - i
         self.capital += pnl
-        return {'entry': entry, 'exit': exit_price, 'size': lot_size, 'pnl': pnl, 'balance': self.capital, 'candles': candles}
+        return {
+            'entry': entry, 
+            'exit': exit_price, 
+            'size': lot_size, 
+            'pnl': pnl, 
+            'balance': self.capital, 
+            'candles': candles,  
+        }
 
     def run(self):
         """
@@ -225,7 +239,9 @@ class Evaluation:
         It returns metrics like
         Total trades, Win rate, Total pnl,
         Avg win, Avg loss, Expectancy,
-        Breakeven winrate and Avg candles.
+        Breakeven winrate, Avg candles,
+        Trade frequency and Profitabilty
+        ratio.
         """
         df = self.trades
     
@@ -240,6 +256,8 @@ class Evaluation:
         expectancy = (win_rate / 100 * avg_win) + (loss_rate * avg_loss)
         breakeven_wr = abs(avg_loss) / (avg_win + abs(avg_loss)) * 100
         avg_candles = df['candles'].mean()
+        trade_frequency = total_trades / self.years
+        profitability_ratio = expectancy * trade_frequency
 
         print(f"Total Trades : {total_trades}")
         print(f"Win Rate     : {win_rate:.2f}%")
@@ -249,6 +267,8 @@ class Evaluation:
         print(f"Expectancy      : ${expectancy:.2f} per trade")
         print(f"Breakeven WR    : {breakeven_wr:.2f}%")
         print(f"Avg Candles     : {avg_candles:.2f}")
+        print(f"Trade Frequency    : {trade_frequency:.2f} trades/year")
+        print(f"Profitability Ratio: {profitability_ratio:.2f}")
 
     def advanced_metrics(self):
         """
@@ -293,9 +313,27 @@ class Evaluation:
         plt.tight_layout()
         plt.show()
 
+    def benchmark(self, risk_free_rate):
+        """
+        Compares Leo's performance against a risk free rate benchmark
+        """
+        rf = risk_free_rate  # 4.5% annual risk free rate
+        initial_capital = self.trades['balance'].iloc[0] - self.trades['pnl'].iloc[0]
+        
+        risk_free_return = initial_capital * (rf * self.years)
+        leo_return = self.trades['pnl'].sum()
+        
+        outperformance = leo_return - risk_free_return
+
+        print(f"\n--- Benchmark (Risk Free Rate) ---")
+        print(f"Period           : {self.years} years")
+        print(f"Risk Free Return : {risk_free_return:.2f} usd")
+        print(f"Leo Return       : {leo_return:.2f} usd")
+        print(f"Outperformance   : {outperformance:.2f} usd")
+
     def metric_for_optimizer(self):
         """
-        It gives one metric(expectancy) 
+        It gives one metric(profitability ratio) 
         that Optmizer class will optimize
         """
         df = self.trades
@@ -309,8 +347,10 @@ class Evaluation:
         avg_loss = losses['pnl'].mean()
         loss_rate = 1 - (win_rate / 100)
         expectancy = (win_rate / 100 * avg_win) + (loss_rate * avg_loss)
+        trade_frequency = total_trades / self.years
+        profitability_ratio = expectancy * trade_frequency
 
-        return expectancy
+        return profitability_ratio
 
 class Execute:
     """
@@ -323,7 +363,7 @@ class Execute:
     classes take
     """
 
-    def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, params):
+    def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params):
         self.symbol = symbol
         self.timeframe = timeframe
         self.pct = pct
@@ -333,6 +373,7 @@ class Execute:
         self.leverage = leverage
         self.spread = spread
         self.commission = commission
+        self.slippage = slippage
         self.params = params
 
     def run_for_optimizer(self):
@@ -346,7 +387,7 @@ class Execute:
         test = Strategy.MeanReversion(df, self.params)
         results = test.signal()
 
-        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission)
+        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage)
         backtest_results = backtest.run()
 
         if len(backtest_results) == 0:
@@ -370,7 +411,7 @@ class Execute:
         test = Strategy.MeanReversion(df, self.params)
         results = test.signal()
 
-        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission)
+        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage)
         backtest_results = backtest.run()
         candles = backtest.total_candles()
         years = backtest.total_time()
@@ -379,6 +420,7 @@ class Execute:
         Eval.simple_metrics()
         Eval.advanced_metrics()
         Eval.equity_curve()
+        Eval.benchmark(0.06)
 
 class Optimizer:
     """
@@ -478,7 +520,7 @@ class Optimizer:
 
             params = self.new_params(final_grid, indices)
             #symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, params
-            Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 1.5, 3.5, params)
+            Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 1.5, 3.5, 0, params)
             score = Exec.run_for_optimizer()
 
             if score > best_score:
@@ -493,16 +535,16 @@ params = {
     'sma_window':  [10, 30, 5],
     'std_window':  [10, 20, 2],
     'entry_std':   [1, 2.5, 0.5],
-    'tp_pip':      [20, 170, 5],
+    'tp_pip':      [20, 70, 5],
     'sl_pip':      [20, 70, 5],
     'max_candle':  [10, 30, 5],
 }
 
 Opt = Optimizer(params)
-params, score = Opt.run(1)
+params, score = Opt.run(100)
 print(params)
 print(score)
 
-#symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, params
-Exec = Execute("EURUSD", "H1", 25, False, 100_000, 0.0025, 1, 1.5, 3.5, params)
+#symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params
+Exec = Execute("EURUSD", "H1", 25, False, 100_000, 0.0025, 1, 0.5, 7, 0.5, params)
 score = Exec.run_for_user()
