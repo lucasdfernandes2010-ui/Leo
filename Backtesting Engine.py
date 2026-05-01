@@ -108,6 +108,13 @@ class Backtest:
         self.commission = commission
         self.slippage = slippage
         self.pip = 0.0001
+        self.highs    = df['high'].values
+        self.lows     = df['low'].values
+        self.opens    = df['open'].values
+        self.signals  = df['signal'].values
+        self.tp_pip      = df['tp_pip'].iloc[0]
+        self.sl_pip  = df['sl_pip'].iloc[0]
+        self.max_candle   = int(df['max_candle'].iloc[0])
 
     def enter_trade(self, i):
         """
@@ -118,9 +125,9 @@ class Backtest:
         """
         spread = self.spread * self.pip
         slippage = random.uniform(0, self.slippage) * self.pip
-        entry = self.df['open'].iloc[i + 1] + spread + slippage
-        tp = entry + self.df['tp_pip'].iloc[0] * self.pip
-        sl = entry - self.df['sl_pip'].iloc[0] * self.pip
+        entry = self.opens[i + 1] + spread + slippage
+        tp = entry + self.tp_pip * self.pip
+        sl = entry - self.sl_pip * self.pip
         return entry, sl, tp
 
     def position_sizing(self, entry, sl):
@@ -148,11 +155,11 @@ class Backtest:
         It closes all trade with exit_trade()
         """
         for j in range(i + 1, len(self.df)):
-            high = self.df['high'].iloc[j]
-            low = self.df['low'].iloc[j]
-            opens = self.df['open'].iloc[j]
+            high  = self.highs[j]
+            low   = self.lows[j]
+            opens = self.opens[j]
 
-            if j - i == self.df['max_candle'].iloc[0]:
+            if j - i == self.max_candle:
                 return self.exit_trade(entry, opens, lot_size, j, i)
 
             elif high >= tp and low <= sl:
@@ -196,7 +203,7 @@ class Backtest:
         """
         trades = []
         for i in range(len(self.df) - 1):
-            if self.df['signal'].iloc[i]:
+            if self.signals[i]:
                 entry, sl, tp = self.enter_trade(i)
                 lot_size = self.position_sizing(entry, sl)
                 trade = self.monitor_trade(i, entry, tp, sl, lot_size)
@@ -520,7 +527,7 @@ class Optimizer:
 
             params = self.new_params(final_grid, indices)
             #symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, params
-            Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 1.5, 3.5, 0, params)
+            Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 1.5, 3.5, 0.5, params)
             score = Exec.run_for_optimizer()
 
             if score > best_score:
@@ -532,16 +539,16 @@ class Optimizer:
         return best_params, best_score
 
 params = {
-    'sma_window':  [10, 30, 5],
-    'std_window':  [10, 20, 2],
-    'entry_std':   [1, 2.5, 0.5],
-    'tp_pip':      [20, 70, 5],
-    'sl_pip':      [20, 70, 5],
-    'max_candle':  [10, 30, 5],
+    'sma_window':  [20, 100, 10],   
+    'std_window':  [10, 30, 5],    
+    'entry_std':   [1, 3, 0.25], 
+    'tp_pip':      [40, 80, 5],     
+    'sl_pip':      [15, 35, 5],    
+    'max_candle':  [10, 46, 6],     
 }
 
 Opt = Optimizer(params)
-params, score = Opt.run(100)
+params, score = Opt.run(1000)
 print(params)
 print(score)
 
