@@ -8,7 +8,6 @@ class Emacross:
         self.ema_window = params['ema_window']
         self.tp_pip = params['tp_pip']
         self.sl_pip = params['sl_pip']
-        self.max_candle = params['max_candle']
 
     def signal(self):
         df = self.df 
@@ -17,7 +16,6 @@ class Emacross:
         df['signal'] = ( (df['close'] > df['ema50']) & (df['close'].shift(1) < df['ema50'].shift(1)) )
         df['tp_pip'] = self.tp_pip
         df['sl_pip'] = self.sl_pip
-        df['max_candle'] = self.max_candle
         return df 
 
 class MeanReversion:

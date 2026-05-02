@@ -4,6 +4,8 @@ import random
 import matplotlib.pyplot as plt
 import numpy as np
 import Strategy
+import matplotlib.cm as cm
+from scipy import stats
 import time
 
 """
@@ -32,6 +34,7 @@ Leo:
         advanced_metrics()
         equity_curve()
         metric_for_optimizer()
+        
         benchmark()
 
     Execute Class:
@@ -99,7 +102,7 @@ class Backtest:
     capital(after trade), and candles to Evaluation Class
     """
 
-    def __init__(self, df, capital, risk, leverage, spread, commission, slippage):
+    def __init__(self, df, capital, risk, leverage, spread, commission, slippage, max_candle):
         self.df = df
         self.capital = capital
         self.risk = risk
@@ -114,7 +117,7 @@ class Backtest:
         self.signals  = df['signal'].values
         self.tp_pip      = df['tp_pip'].iloc[0]
         self.sl_pip  = df['sl_pip'].iloc[0]
-        self.max_candle   = int(df['max_candle'].iloc[0])
+        self.max_candle = max_candle
 
     def enter_trade(self, i):
         """
@@ -163,13 +166,13 @@ class Backtest:
                 return self.exit_trade(entry, opens, lot_size, j, i)
 
             elif high >= tp and low <= sl:
-                return self.exit_trade(entry, sl, lot_size, j, i)
+                return self.exit_trade(entry, low, lot_size, j, i)
 
             elif low <= sl:
-                return self.exit_trade(entry, sl, lot_size, j, i)
+                return self.exit_trade(entry, low, lot_size, j, i)
 
             elif high >= tp:
-                return self.exit_trade(entry, tp, lot_size, j, i)
+                return self.exit_trade(entry, high, lot_size, j, i)
 
     def exit_trade(self, entry, exit_price, lot_size, j, i):
         """
@@ -312,6 +315,99 @@ class Evaluation:
         plt.tight_layout()
         plt.show()
 
+    def monte_carlo(self, simulations=1000):
+        """
+        Runs Monte Carlo simulation by randomly resampling trade PnL
+        Gives a graph of multiple equity curve branches
+        and metrics like median final balance, 5th/95th percentile,
+        probability of ruin, and max drawdown distribution
+        """
+
+        pnl = self.trades['pnl'].values
+        n = len(pnl)
+        initial_balance = self.trades['balance'].iloc[0] - self.trades['pnl'].iloc[0]
+
+        final_balances = []
+        max_drawdowns = []
+        all_curves = []
+
+        for _ in range(simulations):
+            resampled = np.random.choice(pnl, size=n, replace=True)
+            curve = initial_balance + np.cumsum(resampled)
+            all_curves.append(curve)
+            final_balances.append(curve[-1])
+
+            peak = np.maximum.accumulate(curve)
+            dd = ((peak - curve) / peak).max() * 100
+            max_drawdowns.append(dd)
+
+        final_balances = np.array(final_balances)
+        max_drawdowns = np.array(max_drawdowns)
+
+        p5  = np.percentile(final_balances, 5)
+        p50 = np.percentile(final_balances, 50)
+        p95 = np.percentile(final_balances, 95)
+        prob_ruin = (final_balances < initial_balance).mean() * 100
+        avg_max_dd = max_drawdowns.mean()
+        worst_dd = max_drawdowns.max()
+
+        # plot
+        fig, axes = plt.subplots(1, 2, figsize=(16, 5))
+
+        # equity curves
+        ax1 = axes[0]
+        colors = cm.RdYlGn(np.linspace(0, 1, simulations))
+        sorted_indices = np.argsort([c[-1] for c in all_curves])
+
+        for idx in sorted_indices:
+            alpha = 0.03
+            color = colors[np.where(sorted_indices == idx)[0][0]]
+            ax1.plot(all_curves[idx], color=color, linewidth=0.5, alpha=alpha)
+
+        # highlight percentile bands
+        all_curves_arr = np.array(all_curves)
+        ax1.plot(np.percentile(all_curves_arr, 5,  axis=0), color='red',   linewidth=1.5, label='5th percentile')
+        ax1.plot(np.percentile(all_curves_arr, 50, axis=0), color='white', linewidth=1.5, label='Median')
+        ax1.plot(np.percentile(all_curves_arr, 95, axis=0), color='lime',  linewidth=1.5, label='95th percentile')
+
+        ax1.axhline(initial_balance, color='yellow', linewidth=1, linestyle='--', label='Starting balance')
+        ax1.set_facecolor('#0d0d0d')
+        fig.patch.set_facecolor('#0d0d0d')
+        ax1.set_title('Monte Carlo — Equity Curves', color='white')
+        ax1.set_xlabel('Trade #', color='white')
+        ax1.set_ylabel('Balance (USD)', color='white')
+        ax1.tick_params(colors='white')
+        ax1.legend(fontsize=8)
+        ax1.grid(True, alpha=0.1)
+
+        # final balance distribution
+        ax2 = axes[1]
+        ax2.hist(final_balances, bins=60, color='#00ff88', alpha=0.7, edgecolor='none')
+        ax2.axvline(p5,             color='red',    linewidth=1.5, linestyle='--', label=f'5th %ile: ${p5:,.0f}')
+        ax2.axvline(p50,            color='white',  linewidth=1.5, linestyle='--', label=f'Median:   ${p50:,.0f}')
+        ax2.axvline(p95,            color='lime',   linewidth=1.5, linestyle='--', label=f'95th %ile: ${p95:,.0f}')
+        ax2.axvline(initial_balance,color='yellow', linewidth=1.5, linestyle='--', label=f'Start: ${initial_balance:,.0f}')
+        ax2.set_facecolor('#0d0d0d')
+        ax2.set_title('Final Balance Distribution', color='white')
+        ax2.set_xlabel('Final Balance (USD)', color='white')
+        ax2.set_ylabel('Frequency', color='white')
+        ax2.tick_params(colors='white')
+        ax2.legend(fontsize=8)
+        ax2.grid(True, alpha=0.1)
+
+        plt.tight_layout()
+        plt.show()
+
+        # metrics
+        print(f"\n--- Monte Carlo ({simulations} simulations) ---")
+        print(f"Initial Balance  : ${initial_balance:,.2f}")
+        print(f"Median Final     : ${p50:,.2f}")
+        print(f"5th Percentile   : ${p5:,.2f}")
+        print(f"95th Percentile  : ${p95:,.2f}")
+        print(f"Prob of Ruin     : {prob_ruin:.2f}%")
+        print(f"Avg Max Drawdown : {avg_max_dd:.2f}%")
+        print(f"Worst Drawdown   : {worst_dd:.2f}%")
+
     def benchmark(self, risk_free_rate):
         """
         Compares Leo's performance against a risk free rate benchmark
@@ -329,6 +425,40 @@ class Evaluation:
         print(f"Risk Free Return : {risk_free_return:.2f} usd")
         print(f"Leo Return       : {leo_return:.2f} usd")
         print(f"Outperformance   : {outperformance:.2f} usd")
+
+    def hypothesis_test(self):
+        """
+        H0: mean PnL per trade = 0 (no edge)
+        H1: mean PnL per trade > 0 (positive edge)
+        One sample t-test on trade PnL
+        """
+
+        pnl = self.trades['pnl'].values
+        n = len(pnl)
+        mean = pnl.mean()
+        std = pnl.std(ddof=1)
+        std_error = std / (n ** 0.5)
+
+        t_stat = mean / std_error
+        p_value = 1 - stats.t.cdf(t_stat, df=n-1)  # one tailed
+
+        print(f"\n--- Hypothesis Test ---")
+        print(f"H0              : Mean PnL = 0")
+        print(f"H1              : Mean PnL > 0")
+        print(f"N Trades        : {n}")
+        print(f"Mean PnL        : {mean:.2f}")
+        print(f"Std             : {std:.2f}")
+        print(f"Std Error       : {std_error:.2f}")
+        print(f"T-Statistic     : {t_stat:.4f}")
+        print(f"P-Value         : {p_value:.4f}")
+
+        if p_value < 0.05:
+            print(f"Result          : REJECT H0 — edge is statistically significant (p < 0.05)")
+        else:
+            print(f"Result          : FAIL TO REJECT H0 — no significant edge (p >= 0.05)")
+
+
+
 
     def metric_for_optimizer(self):
         """
@@ -362,7 +492,7 @@ class Execute:
     classes take
     """
 
-    def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params):
+    def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params, max_candle):
         self.symbol = symbol
         self.timeframe = timeframe
         self.pct = pct
@@ -374,6 +504,7 @@ class Execute:
         self.commission = commission
         self.slippage = slippage
         self.params = params
+        self.max_candle = max_candle
 
     def run_for_optimizer(self):
         """
@@ -386,7 +517,7 @@ class Execute:
         test = Strategy.Emacross(df, self.params)
         results = test.signal()
 
-        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage)
+        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.max_candle)
         backtest_results = backtest.run()
 
         if len(backtest_results) == 0:
@@ -410,7 +541,7 @@ class Execute:
         test = Strategy.Emacross(df, self.params)
         results = test.signal()
 
-        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage)
+        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.max_candle)
         backtest_results = backtest.run()
         candles = backtest.total_candles()
         years = backtest.total_time()
@@ -419,6 +550,8 @@ class Execute:
         Eval.metrics()
         Eval.equity_curve()
         Eval.benchmark(0.06)
+        Eval.hypothesis_test()
+        Eval.monte_carlo(100)
 
 class Optimizer:
     """
@@ -518,7 +651,7 @@ class Optimizer:
 
             params = self.new_params(final_grid, indices)
             #symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, params
-            Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 1.5, 3.5, 0.5, params)
+            Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 1.5, 3.5, 0.5, params, 24)
             score = Exec.run_for_optimizer()
 
             if score > best_score:
@@ -530,10 +663,9 @@ class Optimizer:
         return best_params, best_score
 
 params = {
-    'ema_window':   [10, 50, 5],
+    'ema_window':   [20, 50, 5],
     'tp_pip':       [20, 200, 5],
-    'sl_pip':       [20, 200, 5],
-    'max_candle':   [10, 30, 10],
+    'sl_pip':       [20, 50, 5],
 }
 
 Opt = Optimizer(params)
@@ -542,5 +674,5 @@ print(params)
 print(score)
 
 #symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params
-Exec = Execute("EURUSD", "H1", 25, False, 100_000, 0.01, 1, 0.5, 7, 0.5, params)
+Exec = Execute("EURUSD", "H1", 25, False, 100_000, 0.0025, 1, 0.5, 7, 0.5, params, 24)
 score = Exec.run_for_user()
