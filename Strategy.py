@@ -3,17 +3,21 @@ import pandas as pd
 
 class Emacross:
 
-    def __init__(self, df):
+    def __init__(self, df, params):
         self.df = df
+        self.ema_window = params['ema_window']
+        self.tp_pip = params['tp_pip']
+        self.sl_pip = params['sl_pip']
+        self.max_candle = params['max_candle']
 
     def signal(self):
         df = self.df 
-        df['ema50'] = ta.trend.ema_indicator(df['close'], window=50)
-        df['sma14'] = ta.trend.sma_indicator(df['close'], window=14)
-        df['std14'] = df['close'].rolling(window=14).std()
-        df['adx14'] = ta.trend.adx(df['high'], df['low'], df['close'], window=14)
+        df['ema50'] = ta.trend.ema_indicator(df['close'], window=self.ema_window)
 
-        df['signal'] = ( (df['close'] > df['ema50']) & (df['close'].shift(1) < df['ema50'].shift(1)) & (df['adx14'] > 10) & (df['adx14'] < 25) )
+        df['signal'] = ( (df['close'] > df['ema50']) & (df['close'].shift(1) < df['ema50'].shift(1)) )
+        df['tp_pip'] = self.tp_pip
+        df['sl_pip'] = self.sl_pip
+        df['max_candle'] = self.max_candle
         return df 
 
 class MeanReversion:

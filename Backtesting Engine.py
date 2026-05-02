@@ -241,7 +241,7 @@ class Evaluation:
         self.candles = candles
         self.years = years
 
-    def simple_metrics(self):
+    def metrics(self):
         """
         It returns metrics like
         Total trades, Win rate, Total pnl,
@@ -265,28 +265,6 @@ class Evaluation:
         avg_candles = df['candles'].mean()
         trade_frequency = total_trades / self.years
         profitability_ratio = expectancy * trade_frequency
-
-        print(f"Total Trades : {total_trades}")
-        print(f"Win Rate     : {win_rate:.2f}%")
-        print(f"Total PnL    : {total_pnl:.2f} usd")
-        print(f"Avg Win      : {avg_win:.2f} usd")
-        print(f"Avg Loss     : {avg_loss:.2f} usd")
-        print(f"Expectancy      : ${expectancy:.2f} per trade")
-        print(f"Breakeven WR    : {breakeven_wr:.2f}%")
-        print(f"Avg Candles     : {avg_candles:.2f}")
-        print(f"Trade Frequency    : {trade_frequency:.2f} trades/year")
-        print(f"Profitability Ratio: {profitability_ratio:.2f}")
-
-    def advanced_metrics(self):
-        """
-        It returns metrics like
-        Max Drawdown, Profit Factor, Sharpe Ratio,
-        Max Loss and Sortino Ratio.
-        """
-        df = self.trades
-        wins = df[df['pnl'] > 0]
-        losses = df[df['pnl'] < 0]
-
         rolling_peak = df['balance'].cummax()
         drawdown_pct = (rolling_peak - df['balance']) / rolling_peak * 100
         max_drawdown_pct = drawdown_pct.max()
@@ -298,12 +276,26 @@ class Evaluation:
         downside_returns[downside_returns > 0] = 0  
         downside_std = (((downside_returns ** 2).mean()) ** 0.5)  
         sortino = (df['returns'].mean() / downside_std) * (len(df) ** 0.5)
+        var_95 = np.percentile(df['pnl'], 5)
+        es_95 = df[df['pnl'] <= var_95]['pnl'].mean()
 
+        print(f"Total Trades : {total_trades}")
+        print(f"Win Rate     : {win_rate:.2f}%")
+        print(f"Total PnL    : {total_pnl:.2f} usd")
+        print(f"Avg Win      : {avg_win:.2f} usd")
+        print(f"Avg Loss     : {avg_loss:.2f} usd")
+        print(f"Expectancy      : ${expectancy:.2f} per trade")
+        print(f"Breakeven WR    : {breakeven_wr:.2f}%")
+        print(f"Avg Candles     : {avg_candles:.2f}")
+        print(f"Trade Frequency    : {trade_frequency:.2f} trades/year")
+        print(f"Profitability Ratio: {profitability_ratio:.2f}")
         print(f"Max Drawdown %  : {max_drawdown_pct:.2f}%")
         print(f"Profit Factor   : {profit_factor:.2f}")
         print(f"Sharpe Ratio    : {sharpe:.2f}")
         print(f"Max Loss        : {max_loss:.2f}%")
         print(f"Sortino Ratio   : {sortino:.2f}")
+        print(f"VaR 95             : {var_95:.2f} usd")
+        print(f"ES 95              : {es_95:.2f} usd")
 
     def equity_curve(self):
         """
@@ -391,7 +383,7 @@ class Execute:
         feed = Data(self.symbol, self.timeframe)
         df = feed.data_from_local(pct=self.pct, from_start=self.from_start)
 
-        test = Strategy.MeanReversion(df, self.params)
+        test = Strategy.Emacross(df, self.params)
         results = test.signal()
 
         backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage)
@@ -415,7 +407,7 @@ class Execute:
         feed = Data(self.symbol, self.timeframe)
         df = feed.data_from_local(pct=self.pct, from_start=self.from_start)
 
-        test = Strategy.MeanReversion(df, self.params)
+        test = Strategy.Emacross(df, self.params)
         results = test.signal()
 
         backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage)
@@ -424,8 +416,7 @@ class Execute:
         years = backtest.total_time()
         
         Eval = Evaluation(backtest_results, candles, years)
-        Eval.simple_metrics()
-        Eval.advanced_metrics()
+        Eval.metrics()
         Eval.equity_curve()
         Eval.benchmark(0.06)
 
@@ -539,19 +530,17 @@ class Optimizer:
         return best_params, best_score
 
 params = {
-    'sma_window':  [20, 100, 10],   
-    'std_window':  [10, 30, 5],    
-    'entry_std':   [1, 3, 0.25], 
-    'tp_pip':      [40, 80, 5],     
-    'sl_pip':      [15, 35, 5],    
-    'max_candle':  [10, 46, 6],     
+    'ema_window':   [10, 50, 5],
+    'tp_pip':       [20, 200, 5],
+    'sl_pip':       [20, 200, 5],
+    'max_candle':   [10, 30, 10],
 }
 
 Opt = Optimizer(params)
-params, score = Opt.run(1000)
+params, score = Opt.run(100)
 print(params)
 print(score)
 
 #symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params
-Exec = Execute("EURUSD", "H1", 25, False, 100_000, 0.0025, 1, 0.5, 7, 0.5, params)
+Exec = Execute("EURUSD", "H1", 25, False, 100_000, 0.01, 1, 0.5, 7, 0.5, params)
 score = Exec.run_for_user()
