@@ -11,41 +11,39 @@ import time
 """
 The name of this project is Leo
 
-Leo:
+Data Class:
+    data_from_api()
+    data_from_local()
 
-    Data Class:
-        data_from_api()
-        data_from_local()
+Strategy Class:
+    signal()
 
-    Strategy Class:
-        signal()
+Backtest Class:
+    enter_trade()
+    position_sizing()
+    monitor_trade()
+    exit_trade()
+    run()
+    total_time()
+    total_candles()
 
-    Backtest Class:
-        enter_trade()
-        position_sizing()
-        monitor_trade()
-        exit_trade()
-        run()
-        total_time()
-        total_candles()
+Evaluation Class:
+    metrics()
+    equity_curve()
+    metric_for_optimizer()
+    hypothesis_test()
+    monte_carlo()
+    benchmark()
 
-    Evaluation Class:
-        simple_metrics()
-        advanced_metrics()
-        equity_curve()
-        metric_for_optimizer()
-        
-        benchmark()
+Execute Class:
+    run_for_optimizer()
+    run_for_user()
 
-    Execute Class:
-        run_for_optimizer()
-        run_for_user()
-
-    Optimizer Class:
-        grid_maker()
-        new_params()
-        index_range()
-        run()
+Optimizer Class:
+    grid_maker()
+    new_params()
+    index_range()
+    run()
 
 """
 
@@ -268,6 +266,7 @@ class Evaluation:
         avg_candles = df['candles'].mean()
         trade_frequency = total_trades / self.years
         profitability_ratio = expectancy * trade_frequency
+
         rolling_peak = df['balance'].cummax()
         drawdown_pct = (rolling_peak - df['balance']) / rolling_peak * 100
         max_drawdown_pct = drawdown_pct.max()
@@ -306,21 +305,21 @@ class Evaluation:
         (USD vs No. of Trades)
         """
         df = self.trades
-        plt.figure(figsize=(12, 5))
-        plt.plot(df.index, df['balance'], color='green', linewidth=1.5)
+        colour = 'green'
+        if df['balance'].iloc[0] > df['balance'].iloc[-1]:
+            colour = 'red'
+
+        plt.plot(df.index, df['balance'], color=colour, linewidth=1.5)
         plt.title('Equity Curve')
         plt.xlabel('Trade #')
         plt.ylabel('Balance (USD)')
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
+        plt.grid()
         plt.show()
 
-    def monte_carlo(self, simulations=1000):
+    def monte_carlo(self, simulations):
         """
-        Runs Monte Carlo simulation by randomly resampling trade PnL
-        Gives a graph of multiple equity curve branches
-        and metrics like median final balance, 5th/95th percentile,
-        probability of ruin, and max drawdown distribution
+        Performs monte carlo simulations to 
+        get drawdowns and prob of ruin
         """
 
         pnl = self.trades['pnl'].values
@@ -331,7 +330,7 @@ class Evaluation:
         max_drawdowns = []
         all_curves = []
 
-        for _ in range(simulations):
+        for i in range(simulations):
             resampled = np.random.choice(pnl, size=n, replace=True)
             curve = initial_balance + np.cumsum(resampled)
             all_curves.append(curve)
@@ -351,54 +350,6 @@ class Evaluation:
         avg_max_dd = max_drawdowns.mean()
         worst_dd = max_drawdowns.max()
 
-        # plot
-        fig, axes = plt.subplots(1, 2, figsize=(16, 5))
-
-        # equity curves
-        ax1 = axes[0]
-        colors = cm.RdYlGn(np.linspace(0, 1, simulations))
-        sorted_indices = np.argsort([c[-1] for c in all_curves])
-
-        for idx in sorted_indices:
-            alpha = 0.03
-            color = colors[np.where(sorted_indices == idx)[0][0]]
-            ax1.plot(all_curves[idx], color=color, linewidth=0.5, alpha=alpha)
-
-        # highlight percentile bands
-        all_curves_arr = np.array(all_curves)
-        ax1.plot(np.percentile(all_curves_arr, 5,  axis=0), color='red',   linewidth=1.5, label='5th percentile')
-        ax1.plot(np.percentile(all_curves_arr, 50, axis=0), color='white', linewidth=1.5, label='Median')
-        ax1.plot(np.percentile(all_curves_arr, 95, axis=0), color='lime',  linewidth=1.5, label='95th percentile')
-
-        ax1.axhline(initial_balance, color='yellow', linewidth=1, linestyle='--', label='Starting balance')
-        ax1.set_facecolor('#0d0d0d')
-        fig.patch.set_facecolor('#0d0d0d')
-        ax1.set_title('Monte Carlo — Equity Curves', color='white')
-        ax1.set_xlabel('Trade #', color='white')
-        ax1.set_ylabel('Balance (USD)', color='white')
-        ax1.tick_params(colors='white')
-        ax1.legend(fontsize=8)
-        ax1.grid(True, alpha=0.1)
-
-        # final balance distribution
-        ax2 = axes[1]
-        ax2.hist(final_balances, bins=60, color='#00ff88', alpha=0.7, edgecolor='none')
-        ax2.axvline(p5,             color='red',    linewidth=1.5, linestyle='--', label=f'5th %ile: ${p5:,.0f}')
-        ax2.axvline(p50,            color='white',  linewidth=1.5, linestyle='--', label=f'Median:   ${p50:,.0f}')
-        ax2.axvline(p95,            color='lime',   linewidth=1.5, linestyle='--', label=f'95th %ile: ${p95:,.0f}')
-        ax2.axvline(initial_balance,color='yellow', linewidth=1.5, linestyle='--', label=f'Start: ${initial_balance:,.0f}')
-        ax2.set_facecolor('#0d0d0d')
-        ax2.set_title('Final Balance Distribution', color='white')
-        ax2.set_xlabel('Final Balance (USD)', color='white')
-        ax2.set_ylabel('Frequency', color='white')
-        ax2.tick_params(colors='white')
-        ax2.legend(fontsize=8)
-        ax2.grid(True, alpha=0.1)
-
-        plt.tight_layout()
-        plt.show()
-
-        # metrics
         print(f"\n--- Monte Carlo ({simulations} simulations) ---")
         print(f"Initial Balance  : ${initial_balance:,.2f}")
         print(f"Median Final     : ${p50:,.2f}")
@@ -430,7 +381,7 @@ class Evaluation:
         """
         H0: mean PnL per trade = 0 (no edge)
         H1: mean PnL per trade > 0 (positive edge)
-        One sample t-test on trade PnL
+        One sample t-test on trade PnL for mean pnl
         """
 
         pnl = self.trades['pnl'].values
@@ -440,25 +391,17 @@ class Evaluation:
         std_error = std / (n ** 0.5)
 
         t_stat = mean / std_error
-        p_value = 1 - stats.t.cdf(t_stat, df=n-1)  # one tailed
+        p_value = 1 - stats.t.cdf(t_stat, df=n-1) 
 
         print(f"\n--- Hypothesis Test ---")
         print(f"H0              : Mean PnL = 0")
         print(f"H1              : Mean PnL > 0")
-        print(f"N Trades        : {n}")
-        print(f"Mean PnL        : {mean:.2f}")
-        print(f"Std             : {std:.2f}")
-        print(f"Std Error       : {std_error:.2f}")
-        print(f"T-Statistic     : {t_stat:.4f}")
         print(f"P-Value         : {p_value:.4f}")
 
         if p_value < 0.05:
             print(f"Result          : REJECT H0 — edge is statistically significant (p < 0.05)")
         else:
             print(f"Result          : FAIL TO REJECT H0 — no significant edge (p >= 0.05)")
-
-
-
 
     def metric_for_optimizer(self):
         """
