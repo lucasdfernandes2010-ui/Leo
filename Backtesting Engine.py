@@ -100,7 +100,7 @@ class Backtest:
     capital(after trade), and candles to Evaluation Class
     """
 
-    def __init__(self, df, capital, risk, leverage, spread, commission, slippage, max_candle):
+    def __init__(self, df, capital, risk, leverage, spread, commission, slippage, max_candle, pip, asset):
         self.df = df
         self.capital = capital
         self.risk = risk
@@ -108,14 +108,15 @@ class Backtest:
         self.spread = spread
         self.commission = commission
         self.slippage = slippage
-        self.pip = 0.0001
         self.highs    = df['high'].values
+        self.pip = pip
         self.lows     = df['low'].values
         self.opens    = df['open'].values
         self.signals  = df['signal'].values
-        self.tp_pip      = df['tp_pip'].iloc[0]
-        self.sl_pip  = df['sl_pip'].iloc[0]
+        self.tp     = df['tp'].iloc[0]
+        self.sl = df['sl'].iloc[0]
         self.max_candle = max_candle
+        self.asset = asset
 
     def enter_trade(self, i):
         """
@@ -124,12 +125,21 @@ class Backtest:
         It adds spread and random slippage
         It calculates entry, tp, sl
         """
-        spread = self.spread * self.pip
-        slippage = random.uniform(0, self.slippage) * self.pip
-        entry = self.opens[i + 1] + spread + slippage
-        tp = entry + self.tp_pip * self.pip
-        sl = entry - self.sl_pip * self.pip
-        return entry, sl, tp
+        if self.asset == 'forex':
+            spread = self.spread * self.pip
+            slippage = random.uniform(0, self.slippage) * self.pip
+            entry = self.opens[i + 1] + spread + slippage
+            tp = entry + self.tp * self.pip
+            sl = entry - self.sl * self.pip
+            return entry, sl, tp
+
+        elif self.asset == 'equity':
+            spread = self.spread 
+            slippage = self.opens[i + 1] * self.slippage
+            entry = self.opens[i + 1] + spread + slippage
+            tp = entry * ((100 + self.tp) / 100)
+            sl = entry * ((100 - self.sl) / 100)
+            return entry, sl, tp
 
     def position_sizing(self, entry, sl):
         """
@@ -138,13 +148,20 @@ class Backtest:
         Max_lots is calculated with risk and leverage
         Lot_size cannot be greater than max_lots
         """
-        sl_pip = (entry - sl) / self.pip
-        max_lots = (self.capital * self.leverage) / (100_000 * entry)
-        lot_size = (self.capital * self.risk) / (sl_pip * 10)
-        lot_size = min(max_lots, lot_size)
-        return lot_size
+        if self.asset == 'forex':
+            sl_pip = (entry - sl) / self.pip
+            max_lots = (self.capital * self.leverage) / (100_000 * entry)
+            lot_size = (self.capital * self.risk * self.leverage) / (sl_pip * 10)
+            lot_size = min(max_lots, lot_size)
+            return lot_size
 
-    def monitor_trade(self, i, entry, tp, sl, lot_size):
+        elif self.asset == 'equity':
+            max_size = (self.capital * self.leverage) / entry
+            size = (self.capital * self.risk * self.leverage) / (entry - sl)
+            size = min(size, max_size)
+            return size
+
+    def monitor_trade(self, i, entry, tp, sl, size):
         """
         It takes entry, tp, sl from enter_trade()
         It takes lot_size from position_sizing()
@@ -161,18 +178,18 @@ class Backtest:
             opens = self.opens[j]
 
             if j - i == self.max_candle:
-                return self.exit_trade(entry, opens, lot_size, j, i)
+                return self.exit_trade(entry, opens, size, j, i)
 
             elif high >= tp and low <= sl:
-                return self.exit_trade(entry, low, lot_size, j, i)
+                return self.exit_trade(entry, low, size, j, i)
 
             elif low <= sl:
-                return self.exit_trade(entry, low, lot_size, j, i)
+                return self.exit_trade(entry, low, size, j, i)
 
             elif high >= tp:
-                return self.exit_trade(entry, high, lot_size, j, i)
+                return self.exit_trade(entry, high, size, j, i)
 
-    def exit_trade(self, entry, exit_price, lot_size, j, i):
+    def exit_trade(self, entry, exit_price, size, j, i):
         """
         It takes entry from enter_trade()
         It takes lot_size from position_sizing()
@@ -181,15 +198,20 @@ class Backtest:
         Calculates the pnl(subtracts cost) and adds it to capital
         Returns entry, exit, size, pnl, balance, candles to Backtest.run()
         """
-        pnl = (exit_price - entry) * lot_size * 100_000
-        cost = self.commission * lot_size
+        if self.asset == 'forex':
+            pnl = (exit_price - entry) * size * 100_000
+
+        elif self.asset == 'equity':
+            pnl = (exit_price - entry) * size
+
+        cost = self.commission * size
         pnl -= cost
         candles = j - i
         self.capital += pnl
         return {
             'entry': entry, 
             'exit': exit_price, 
-            'size': lot_size, 
+            'size': size, 
             'pnl': pnl, 
             'balance': self.capital, 
             'candles': candles,  
@@ -206,8 +228,8 @@ class Backtest:
         for i in range(len(self.df) - 1):
             if self.signals[i]:
                 entry, sl, tp = self.enter_trade(i)
-                lot_size = self.position_sizing(entry, sl)
-                trade = self.monitor_trade(i, entry, tp, sl, lot_size)
+                size = self.position_sizing(entry, sl)
+                trade = self.monitor_trade(i, entry, tp, sl, size)
                 if trade:
                     trades.append(trade)
         return pd.DataFrame(trades)
@@ -224,8 +246,8 @@ class Backtest:
         It returns the total time in years 
         in the df(given by Strategy class)
         """
-        start = self.df['time'].iloc[0]
-        end = self.df['time'].iloc[-1]
+        start = pd.to_datetime(self.df['time'].iloc[0], unit='s')
+        end = pd.to_datetime(self.df['time'].iloc[-1], unit='s')
         delta = end - start
         years = round(delta.days / 365, 2)
         return years
@@ -435,7 +457,7 @@ class Execute:
     classes take
     """
 
-    def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params, max_candle):
+    def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params, max_candle, pip, asset):
         self.symbol = symbol
         self.timeframe = timeframe
         self.pct = pct
@@ -448,6 +470,8 @@ class Execute:
         self.slippage = slippage
         self.params = params
         self.max_candle = max_candle
+        self.pip = pip 
+        self.asset = asset
 
     def run_for_optimizer(self):
         """
@@ -460,11 +484,8 @@ class Execute:
         test = Strategy.Emacross(df, self.params)
         results = test.signal()
 
-        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.max_candle)
+        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.max_candle, self.pip, self.asset)
         backtest_results = backtest.run()
-
-        if len(backtest_results) == 0:
-            return -999
 
         candles = backtest.total_candles()
         years = backtest.total_time()
@@ -484,7 +505,7 @@ class Execute:
         test = Strategy.Emacross(df, self.params)
         results = test.signal()
 
-        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.max_candle)
+        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.max_candle, self.pip, self.asset)
         backtest_results = backtest.run()
         candles = backtest.total_candles()
         years = backtest.total_time()
@@ -584,7 +605,7 @@ class Optimizer:
         ranges = self.index_range(final_grid)
 
         best_params = None
-        best_score = -999
+        best_score = -999999999999
 
         for i in range(runs):
             indices = {}
@@ -593,8 +614,8 @@ class Optimizer:
                 indices[key] = random_index
 
             params = self.new_params(final_grid, indices)
-            #symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, params
-            Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 1.5, 3.5, 0.5, params, 24)
+            # symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params, max_candle, pip, asset
+            Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 0.5, 7, 0.5, params, 24, 0.0001, 'forex')
             score = Exec.run_for_optimizer()
 
             if score > best_score:
@@ -606,16 +627,14 @@ class Optimizer:
         return best_params, best_score
 
 params = {
-    'ema_window':   [20, 50, 5],
-    'tp_pip':       [20, 200, 5],
-    'sl_pip':       [20, 50, 5],
+    'ema_window':   [25, 50, 5],
 }
 
 Opt = Optimizer(params)
-params, score = Opt.run(100)
+params, score = Opt.run(20)
 print(params)
 print(score)
 
-#symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params
-Exec = Execute("EURUSD", "H1", 25, False, 100_000, 0.0025, 1, 0.5, 7, 0.5, params, 24)
+# symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params, max_candle, pip, asset
+Exec = Execute("EURUSD", "H1", 25, False, 100_000, 0.0025, 1, 0.5, 7, 0.5, params, 100, 0.0001, 'forex')
 score = Exec.run_for_user()
