@@ -1,24 +1,25 @@
 import ta
 import pandas as pd 
 
-class Emacross:
+class Emacross:#good strategy
 
     def __init__(self, df, params):
         self.df = df
         self.ema_window = params['ema_window']
-        self.tp = 70
-        self.sl = 70
+        self.tp = 20
+        self.sl = 40
 
     def signal(self):
         df = self.df 
         df['ema50'] = ta.trend.ema_indicator(df['close'], window=self.ema_window)
+        df['signal'] = 0
+        df.loc[(df['close'] < df['ema50']) & (df['close'].shift(1) > df['ema50'].shift(1)), 'signal'] = -1
 
-        df['signal'] = ( (df['close'] > df['ema50']) & (df['close'].shift(1) < df['ema50'].shift(1)) )
         df['tp'] = self.tp
         df['sl'] = self.sl
         return df 
 
-class MeanReversion:
+class MeanReversion:#bad strategy
     """
     This is a MeanReversion Strategy
     It takes data in the form of df by Data class

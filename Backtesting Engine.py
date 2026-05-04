@@ -118,7 +118,7 @@ class Backtest:
         self.max_candle = max_candle
         self.asset = asset
 
-    def enter_trade(self, i):
+    def enter_trade(self, i, signal):
         """
         It takes i(the candle u detect a trade opportunity)
         It enters the trade 
@@ -129,16 +129,31 @@ class Backtest:
             spread = self.spread * self.pip
             slippage = random.uniform(0, self.slippage) * self.pip
             entry = self.opens[i + 1] + spread + slippage
-            tp = entry + self.tp * self.pip
-            sl = entry - self.sl * self.pip
+
+            if signal == 1:
+                tp = entry + self.tp * self.pip
+                sl = entry - self.sl * self.pip
+
+            else:
+                tp = entry - self.tp * self.pip
+                sl = entry + self.sl * self.pip
+            
             return entry, sl, tp
+
 
         elif self.asset == 'equity':
             spread = self.spread 
             slippage = self.opens[i + 1] * self.slippage
             entry = self.opens[i + 1] + spread + slippage
-            tp = entry * ((100 + self.tp) / 100)
-            sl = entry * ((100 - self.sl) / 100)
+
+            if signal == 1:  
+                tp = entry * ((100 + self.tp) / 100)
+                sl = entry * ((100 - self.sl) / 100)
+
+            else:
+                tp = entry * ((100 - self.tp) / 100)
+                sl = entry * ((100 + self.sl) / 100)
+            
             return entry, sl, tp
 
     def position_sizing(self, entry, sl):
@@ -149,7 +164,7 @@ class Backtest:
         Lot_size cannot be greater than max_lots
         """
         if self.asset == 'forex':
-            sl_pip = (entry - sl) / self.pip
+            sl_pip = abs(entry - sl) / self.pip
             max_lots = (self.capital * self.leverage) / (100_000 * entry)
             lot_size = (self.capital * self.risk * self.leverage) / (sl_pip * 10)
             lot_size = min(max_lots, lot_size)
@@ -157,11 +172,11 @@ class Backtest:
 
         elif self.asset == 'equity':
             max_size = (self.capital * self.leverage) / entry
-            size = (self.capital * self.risk * self.leverage) / (entry - sl)
+            size = (self.capital * self.risk * self.leverage) / abs(entry - sl)
             size = min(size, max_size)
             return size
 
-    def monitor_trade(self, i, entry, tp, sl, size):
+    def monitor_trade(self, i, entry, tp, sl, size, signal):
         """
         It takes entry, tp, sl from enter_trade()
         It takes lot_size from position_sizing()
@@ -178,18 +193,31 @@ class Backtest:
             opens = self.opens[j]
 
             if j - i == self.max_candle:
-                return self.exit_trade(entry, opens, size, j, i)
+                return self.exit_trade(entry, opens, size, j, i, signal)
 
-            elif high >= tp and low <= sl:
-                return self.exit_trade(entry, low, size, j, i)
+            if signal == 1:
 
-            elif low <= sl:
-                return self.exit_trade(entry, low, size, j, i)
+                if high >= tp and low <= sl:
+                    return self.exit_trade(entry, low, size, j, i, signal)
 
-            elif high >= tp:
-                return self.exit_trade(entry, high, size, j, i)
+                elif low <= sl:
+                    return self.exit_trade(entry, low, size, j, i, signal)
 
-    def exit_trade(self, entry, exit_price, size, j, i):
+                elif high >= tp:
+                    return self.exit_trade(entry, high, size, j, i, signal)
+
+            else:
+
+                if low <= tp and high >= sl:
+                    return self.exit_trade(entry, high, size, j, i, signal)
+
+                elif high >= sl:
+                    return self.exit_trade(entry, high, size, j, i, signal)
+
+                elif low <= tp:
+                    return self.exit_trade(entry, low, size, j, i, signal)
+
+    def exit_trade(self, entry, exit_price, size, j, i, signal):
         """
         It takes entry from enter_trade()
         It takes lot_size from position_sizing()
@@ -199,10 +227,16 @@ class Backtest:
         Returns entry, exit, size, pnl, balance, candles to Backtest.run()
         """
         if self.asset == 'forex':
-            pnl = (exit_price - entry) * size * 100_000
+            if signal == 1:
+                pnl = (exit_price - entry) * size * 100_000
+            else:
+                pnl = (entry - exit_price) * size * 100_000
 
         elif self.asset == 'equity':
-            pnl = (exit_price - entry) * size
+            if signal == 1:
+                pnl = (exit_price - entry) * size 
+            else:
+                pnl = (entry - exit_price) * size 
 
         cost = self.commission * size
         pnl -= cost
@@ -215,6 +249,7 @@ class Backtest:
             'pnl': pnl, 
             'balance': self.capital, 
             'candles': candles,  
+            'signal': signal
         }
 
     def run(self):
@@ -226,10 +261,11 @@ class Backtest:
         """
         trades = []
         for i in range(len(self.df) - 1):
-            if self.signals[i]:
-                entry, sl, tp = self.enter_trade(i)
+            signal = self.signals[i]
+            if signal == 1 or signal == -1:
+                entry, sl, tp = self.enter_trade(i, signal)
                 size = self.position_sizing(entry, sl)
-                trade = self.monitor_trade(i, entry, tp, sl, size)
+                trade = self.monitor_trade(i, entry, tp, sl, size, signal)
                 if trade:
                     trades.append(trade)
         return pd.DataFrame(trades)
@@ -264,17 +300,17 @@ class Evaluation:
         self.candles = candles
         self.years = years
 
-    def metrics(self):
+    def metrics(self, trade_type='both'):
         """
-        It returns metrics like
-        Total trades, Win rate, Total pnl,
-        Avg win, Avg loss, Expectancy,
-        Breakeven winrate, Avg candles,
-        Trade frequency and Profitabilty
-        ratio.
+        trade_type: 'both', 'long', 'short'
         """
-        df = self.trades
-    
+        if trade_type == 'long':
+            df = self.trades[self.trades['signal'] == 1].reset_index(drop=True)
+        elif trade_type == 'short':
+            df = self.trades[self.trades['signal'] == -1].reset_index(drop=True)
+        else:
+            df = self.trades
+
         total_trades = len(df)
         wins = df[df['pnl'] > 0]
         losses = df[df['pnl'] < 0]
@@ -297,27 +333,28 @@ class Evaluation:
         sharpe = (df['returns'].mean() / df['returns'].std()) * (len(df) ** 0.5)
         max_loss = (losses['pnl'] / (df['balance'] - df['pnl'])).min() * 100
         downside_returns = df['returns'].copy()
-        downside_returns[downside_returns > 0] = 0  
-        downside_std = (((downside_returns ** 2).mean()) ** 0.5)  
+        downside_returns[downside_returns > 0] = 0
+        downside_std = (((downside_returns ** 2).mean()) ** 0.5)
         sortino = (df['returns'].mean() / downside_std) * (len(df) ** 0.5)
         var_95 = np.percentile(df['pnl'], 5)
         es_95 = df[df['pnl'] <= var_95]['pnl'].mean()
 
-        print(f"Total Trades : {total_trades}")
-        print(f"Win Rate     : {win_rate:.2f}%")
-        print(f"Total PnL    : {total_pnl:.2f} usd")
-        print(f"Avg Win      : {avg_win:.2f} usd")
-        print(f"Avg Loss     : {avg_loss:.2f} usd")
-        print(f"Expectancy      : ${expectancy:.2f} per trade")
-        print(f"Breakeven WR    : {breakeven_wr:.2f}%")
-        print(f"Avg Candles     : {avg_candles:.2f}")
+        print(f"\n--- Metrics ({trade_type.upper()}) ---")
+        print(f"Total Trades       : {total_trades}")
+        print(f"Win Rate           : {win_rate:.2f}%")
+        print(f"Total PnL          : {total_pnl:.2f} usd")
+        print(f"Avg Win            : {avg_win:.2f} usd")
+        print(f"Avg Loss           : {avg_loss:.2f} usd")
+        print(f"Expectancy         : ${expectancy:.2f} per trade")
+        print(f"Breakeven WR       : {breakeven_wr:.2f}%")
+        print(f"Avg Candles        : {avg_candles:.2f}")
         print(f"Trade Frequency    : {trade_frequency:.2f} trades/year")
         print(f"Profitability Ratio: {profitability_ratio:.2f}")
-        print(f"Max Drawdown %  : {max_drawdown_pct:.2f}%")
-        print(f"Profit Factor   : {profit_factor:.2f}")
-        print(f"Sharpe Ratio    : {sharpe:.2f}")
-        print(f"Max Loss        : {max_loss:.2f}%")
-        print(f"Sortino Ratio   : {sortino:.2f}")
+        print(f"Max Drawdown %     : {max_drawdown_pct:.2f}%")
+        print(f"Profit Factor      : {profit_factor:.2f}")
+        print(f"Sharpe Ratio       : {sharpe:.2f}")
+        print(f"Max Loss           : {max_loss:.2f}%")
+        print(f"Sortino Ratio      : {sortino:.2f}")
         print(f"VaR 95             : {var_95:.2f} usd")
         print(f"ES 95              : {es_95:.2f} usd")
 
@@ -511,9 +548,11 @@ class Execute:
         years = backtest.total_time()
         
         Eval = Evaluation(backtest_results, candles, years)
-        Eval.metrics()
+        #Eval.metrics('both')
+        #Eval.metrics('long')
+        Eval.metrics('short')
         Eval.equity_curve()
-        Eval.benchmark(0.06)
+        Eval.benchmark(0.05)
         Eval.hypothesis_test()
         Eval.monte_carlo(100)
 
@@ -631,10 +670,10 @@ params = {
 }
 
 Opt = Optimizer(params)
-params, score = Opt.run(20)
+params, score = Opt.run(10)
 print(params)
 print(score)
 
 # symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params, max_candle, pip, asset
-Exec = Execute("EURUSD", "H1", 25, False, 100_000, 0.0025, 1, 0.5, 7, 0.5, params, 100, 0.0001, 'forex')
+Exec = Execute("EURUSD", "H1", 25, False, 100_000, 0.005, 1, 0.5, 7, 0.5, params, 100, 0.0001, 'forex')
 score = Exec.run_for_user()
