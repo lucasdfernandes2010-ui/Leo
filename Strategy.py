@@ -6,8 +6,8 @@ class Emacross:#good strategy
     def __init__(self, df, params):
         self.df = df
         self.ema_window = params['ema_window']
-        self.tp = 20
-        self.sl = 40
+        self.tp = 10
+        self.sl = 20
 
     def signal(self):
         df = self.df 

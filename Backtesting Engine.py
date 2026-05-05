@@ -483,79 +483,6 @@ class Evaluation:
 
         return profitability_ratio
 
-class Execute:
-    """
-    It connects Data class , Strategy class
-    Backtest class and Evaluation class to 
-    run together
-    It makes it easier for the optmizer and 
-    the user to Backtest
-    It takes all the parameters the other 
-    classes take
-    """
-
-    def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params, max_candle, pip, asset):
-        self.symbol = symbol
-        self.timeframe = timeframe
-        self.pct = pct
-        self.from_start = from_start
-        self.capital = capital
-        self.risk = risk
-        self.leverage = leverage
-        self.spread = spread
-        self.commission = commission
-        self.slippage = slippage
-        self.params = params
-        self.max_candle = max_candle
-        self.pip = pip 
-        self.asset = asset
-
-    def run_for_optimizer(self):
-        """
-        It Executes for the optmizer and 
-        returns metric_for_optimizer()
-        """
-        feed = Data(self.symbol, self.timeframe)
-        df = feed.data_from_local(pct=self.pct, from_start=self.from_start)
-
-        test = Strategy.Emacross(df, self.params)
-        results = test.signal()
-
-        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.max_candle, self.pip, self.asset)
-        backtest_results = backtest.run()
-
-        candles = backtest.total_candles()
-        years = backtest.total_time()
-
-        Eval = Evaluation(backtest_results, candles, years)
-        return Eval.metric_for_optimizer()
-
-    def run_for_user(self):
-        """
-        It Executes for the user and returns
-        simple_metric(), advanced_metric(),
-        and equity_curve()
-        """
-        feed = Data(self.symbol, self.timeframe)
-        df = feed.data_from_local(pct=self.pct, from_start=self.from_start)
-
-        test = Strategy.Emacross(df, self.params)
-        results = test.signal()
-
-        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.max_candle, self.pip, self.asset)
-        backtest_results = backtest.run()
-        candles = backtest.total_candles()
-        years = backtest.total_time()
-        
-        Eval = Evaluation(backtest_results, candles, years)
-        #Eval.metrics('both')
-        #Eval.metrics('long')
-        Eval.metrics('short')
-        Eval.equity_curve()
-        Eval.benchmark(0.05)
-        Eval.hypothesis_test()
-        Eval.monte_carlo(100)
-
 class Optimizer:
     """
     It takes params 
@@ -570,8 +497,22 @@ class Optimizer:
     Optmizer works with random search
     """
 
-    def __init__(self, params):
+    def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params, max_candle, pip, asset):
         self.params = params
+        self.symbol = symbol
+        self.timeframe = timeframe
+        self.pct = pct
+        self.from_start = from_start
+        self.capital = capital
+        self.risk = risk
+        self.leverage = leverage
+        self.spread = spread
+        self.commission = commission
+        self.slippage = slippage
+        self.params = params
+        self.max_candle = max_candle
+        self.pip = pip 
+        self.asset = asset
 
     def grid_maker(self):
         """
@@ -653,8 +594,23 @@ class Optimizer:
                 indices[key] = random_index
 
             params = self.new_params(final_grid, indices)
-            # symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params, max_candle, pip, asset
-            Exec = Execute("EURUSD", "H1", 75, True, 100_000, 0.0025, 1, 0.5, 7, 0.5, params, 24, 0.0001, 'forex')
+            config = {
+            'symbol':     self.symbol,
+            'timeframe':  self.timeframe,
+            'pct':        self.pct,
+            'from_start': self.from_start,
+            'capital':    self.capital,
+            'risk':       self.risk,
+            'leverage':   self.leverage,
+            'spread':     self.spread,
+            'commission': self.commission,
+            'slippage':   self.slippage,
+            'params':     params,
+            'max_candle': self.max_candle,
+            'pip':        self.pip,
+            'asset':      self.asset,
+            }
+            Exec = Execute(config)
             score = Exec.run_for_optimizer()
 
             if score > best_score:
@@ -665,15 +621,125 @@ class Optimizer:
 
         return best_params, best_score
 
-params = {
+class Execute:
+    """
+    It connects Data class , Strategy class
+    Backtest class and Evaluation class to 
+    run together
+    It makes it easier for the optmizer and 
+    the user to Backtest
+    It takes all the parameters the other 
+    classes take
+    """
+
+    def __init__(self, config):
+        self.symbol = config['symbol']
+        self.timeframe = config['timeframe']
+        self.pct = config['pct']
+        self.from_start = config['from_start']
+        self.capital = config['capital']
+        self.risk = config['risk']
+        self.leverage = config['leverage']
+        self.spread = config['spread']
+        self.commission = config['commission']
+        self.slippage = config['slippage']
+        self.params = config['params']
+        self.max_candle = config['max_candle']
+        self.pip = config['pip']
+        self.asset = config['asset']
+
+    def run_for_optimizer(self):
+        """
+        It Executes for the optmizer and 
+        returns metric_for_optimizer()
+        """
+        feed = Data(self.symbol, self.timeframe)
+        df = feed.data_from_local(pct=self.pct, from_start=self.from_start)
+
+        test = Strategy.Emacross(df, self.params)
+        results = test.signal()
+
+        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.max_candle, self.pip, self.asset)
+        backtest_results = backtest.run()
+
+        candles = backtest.total_candles()
+        years = backtest.total_time()
+
+        Eval = Evaluation(backtest_results, candles, years)
+        return Eval.metric_for_optimizer()
+
+    def run_for_user(self):
+        """
+        It Executes for the user and returns
+        simple_metric(), advanced_metric(),
+        and equity_curve()
+        """
+        feed = Data(self.symbol, self.timeframe)
+        df = feed.data_from_local(pct=self.pct, from_start=self.from_start)
+
+        test = Strategy.Emacross(df, self.params)
+        results = test.signal()
+
+        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.max_candle, self.pip, self.asset)
+        backtest_results = backtest.run()
+        candles = backtest.total_candles()
+        years = backtest.total_time()
+        
+        Eval = Evaluation(backtest_results, candles, years)
+        #Eval.metrics('both')
+        #Eval.metrics('long')
+        Eval.metrics('short')
+        Eval.equity_curve()
+        Eval.benchmark(0.05)
+        Eval.hypothesis_test()
+        Eval.monte_carlo(100)
+
+    def run(self, runs):
+        Opt = Optimizer(self.symbol, self.timeframe, self.pct, self.from_start, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.params, self.max_candle, self.pip, self.asset)
+        params, score = Opt.run(runs)
+        print(params)
+        print(score)
+        self.pct = 100 - self.pct
+        self.from_start = False
+        config = {
+            'symbol':     self.symbol,
+            'timeframe':  self.timeframe,
+            'pct':        self.pct,
+            'from_start': self.from_start,
+            'capital':    self.capital,
+            'risk':       self.risk,
+            'leverage':   self.leverage,
+            'spread':     self.spread,
+            'commission': self.commission,
+            'slippage':   self.slippage,
+            'params':     params,
+            'max_candle': self.max_candle,
+            'pip':        self.pip,
+            'asset':      self.asset,
+        }
+        Exec = Execute(config)
+        score = Exec.run_for_user()
+
+params_strategy = {
     'ema_window':   [25, 50, 5],
 }
 
-Opt = Optimizer(params)
-params, score = Opt.run(10)
-print(params)
-print(score)
-
+config = {
+    'symbol':     'EURUSD',
+    'timeframe':  'M15',
+    'pct':        75,
+    'from_start': True,
+    'capital':    100_000,
+    'risk':       0.0025,
+    'leverage':   1,
+    'spread':     0.5,
+    'commission': 7,
+    'slippage':   0.5,
+    'params':     params_strategy,
+    'max_candle': 1000,
+    'pip':        0.0001,
+    'asset':      'forex',
+}
 # symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params, max_candle, pip, asset
-Exec = Execute("EURUSD", "H1", 25, False, 100_000, 0.005, 1, 0.5, 7, 0.5, params, 100, 0.0001, 'forex')
-score = Exec.run_for_user()
+Exec = Execute(config)
+score = Exec.run(20)
