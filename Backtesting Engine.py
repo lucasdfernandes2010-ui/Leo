@@ -100,7 +100,7 @@ class Backtest:
     capital(after trade), and candles to Evaluation Class
     """
 
-    def __init__(self, df, capital, risk, leverage, spread, commission, slippage, max_candle, pip, asset):
+    def __init__(self, df, capital, risk, leverage, spread, commission, slippage, max_candle, pip, asset, symbol):
         self.df = df
         self.capital = capital
         self.risk = risk
@@ -117,6 +117,8 @@ class Backtest:
         self.sl = df['sl'].iloc[0]
         self.max_candle = max_candle
         self.asset = asset
+        self.symbol = symbol
+        self.usd_base = self.symbol[:3] == 'USD'
 
     def enter_trade(self, i, signal):
         """
@@ -165,8 +167,14 @@ class Backtest:
         """
         if self.asset == 'forex':
             sl_pip = abs(entry - sl) / self.pip
+
+            if self.usd_base:
+                pip_value = (self.pip / entry) * 100_000
+            else:
+                pip_value = 10
+
             max_lots = (self.capital * self.leverage) / (100_000 * entry)
-            lot_size = (self.capital * self.risk * self.leverage) / (sl_pip * 10)
+            lot_size = (self.capital * self.risk * self.leverage) / (sl_pip * pip_value)
             lot_size = min(max_lots, lot_size)
             return lot_size
 
@@ -227,10 +235,15 @@ class Backtest:
         Returns entry, exit, size, pnl, balance, candles to Backtest.run()
         """
         if self.asset == 'forex':
-            if signal == 1:
-                pnl = (exit_price - entry) * size * 100_000
+            if self.usd_base:
+                pip_value = self.pip / exit_price
             else:
-                pnl = (entry - exit_price) * size * 100_000
+                pip_value = 1
+
+            if signal == 1:
+                pnl = (exit_price - entry) * size * 100_000 * pip_value
+            else:
+                pnl = (entry - exit_price) * size * 100_000 * pip_value
 
         elif self.asset == 'equity':
             if signal == 1:
@@ -497,7 +510,7 @@ class Optimizer:
     Optmizer works with random search
     """
 
-    def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params, max_candle, pip, asset):
+    def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params, max_candle, pip, asset, strategy):
         self.params = params
         self.symbol = symbol
         self.timeframe = timeframe
@@ -513,6 +526,7 @@ class Optimizer:
         self.max_candle = max_candle
         self.pip = pip 
         self.asset = asset
+        self.strategy = strategy
 
     def grid_maker(self):
         """
@@ -609,6 +623,7 @@ class Optimizer:
             'max_candle': self.max_candle,
             'pip':        self.pip,
             'asset':      self.asset,
+            'strategy':   self.strategy,
             }
             Exec = Execute(config)
             score = Exec.run_for_optimizer()
@@ -647,6 +662,7 @@ class Execute:
         self.max_candle = config['max_candle']
         self.pip = config['pip']
         self.asset = config['asset']
+        self.strategy = config['strategy']
 
     def run_for_optimizer(self):
         """
@@ -656,10 +672,10 @@ class Execute:
         feed = Data(self.symbol, self.timeframe)
         df = feed.data_from_local(pct=self.pct, from_start=self.from_start)
 
-        test = Strategy.Emacross(df, self.params)
+        test = self.strategy(df, self.params)
         results = test.signal()
 
-        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.max_candle, self.pip, self.asset)
+        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.max_candle, self.pip, self.asset, self.symbol)
         backtest_results = backtest.run()
 
         candles = backtest.total_candles()
@@ -677,10 +693,10 @@ class Execute:
         feed = Data(self.symbol, self.timeframe)
         df = feed.data_from_local(pct=self.pct, from_start=self.from_start)
 
-        test = Strategy.Emacross(df, self.params)
+        test = self.strategy(df, self.params)
         results = test.signal()
 
-        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.max_candle, self.pip, self.asset)
+        backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.max_candle, self.pip, self.asset, self.symbol)
         backtest_results = backtest.run()
         candles = backtest.total_candles()
         years = backtest.total_time()
@@ -695,7 +711,7 @@ class Execute:
         Eval.monte_carlo(100)
 
     def run(self, runs):
-        Opt = Optimizer(self.symbol, self.timeframe, self.pct, self.from_start, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.params, self.max_candle, self.pip, self.asset)
+        Opt = Optimizer(self.symbol, self.timeframe, self.pct, self.from_start, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.params, self.max_candle, self.pip, self.asset, self.strategy)
         params, score = Opt.run(runs)
         print(params)
         print(score)
@@ -716,6 +732,7 @@ class Execute:
             'max_candle': self.max_candle,
             'pip':        self.pip,
             'asset':      self.asset,
+            'strategy':   self.strategy,
         }
         Exec = Execute(config)
         score = Exec.run_for_user()
@@ -739,7 +756,8 @@ config = {
     'max_candle': 1000,
     'pip':        0.0001,
     'asset':      'forex',
+    'strategy': Strategy.Emacross,
 }
-# symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params, max_candle, pip, asset
+
 Exec = Execute(config)
 score = Exec.run(20)

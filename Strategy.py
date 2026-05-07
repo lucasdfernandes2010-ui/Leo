@@ -2,6 +2,7 @@ import ta
 import pandas as pd 
 
 class Emacross:#good strategy
+    #{'ema_window': 45}
 
     def __init__(self, df, params):
         self.df = df
@@ -51,4 +52,3 @@ class MeanReversion:#bad strategy
         df['sl_pip'] = self.sl_pip
         df['max_candle'] = self.max_candle
         return df
-
