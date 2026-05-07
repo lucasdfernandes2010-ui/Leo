@@ -1,14 +1,22 @@
 import ta
 import pandas as pd 
 
-class Emacross:#good strategy
-    #{'ema_window': 45}
+class Emacross:
+    """
+    EMA Crossover Strategy — Short Only
+    
+    Signal: Price crosses below EMA from above (bearish crossover)
+    Exit: TP/SL in pips
+    
+    Best Params: {'ema_window': 45}
+    Timeframe: M15
+    """
 
     def __init__(self, df, params):
         self.df = df
         self.ema_window = params['ema_window']
-        self.tp = 10
-        self.sl = 20
+        self.tp = 25
+        self.sl = 25
 
     def signal(self):
         df = self.df 

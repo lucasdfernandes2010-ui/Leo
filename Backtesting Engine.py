@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import Strategy
 import matplotlib.cm as cm
+from datetime import datetime
+import psycopg2
 from scipy import stats
 import time
 
@@ -57,34 +59,39 @@ class Data:
         self.symbol = symbol
         self.timeframe = timeframe
 
-    def data_from_api(self, timeframe, start, end):
-        """ 
-        This gets data from MT5 api 
-        You can access data by date
-        """
-        mt5.initialize()
-        rates = mt5.copy_rates_range(self.symbol, timeframe, start, end)
-        df = pd.DataFrame(rates)
-        mt5.shutdown()
+    def from_postgres(self, start, end, asset, host, database, user, password, pct, from_start):
 
-        df = df.dropna()
+        start = int(start.timestamp())
+        end   = int(end.timestamp())
+        conn = psycopg2.connect(
+            host     = host,
+            database = database,
+            user     = user,
+            password = password,
+        )
+
+        cursor = conn.cursor()
+
+        query = """
+            SELECT time, open, high, low, close, volume
+            FROM candles
+            WHERE asset = %s
+            AND symbol = %s
+            AND timeframe = %s
+            AND time BETWEEN %s AND %s
+            ORDER BY time ASC
+        """
+
+        cursor.execute(query, (asset, self.symbol, self.timeframe, start, end))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        df = pd.DataFrame(rows, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
         df = df.reset_index(drop=True)
-        return df
-
-    def data_from_local(self, pct=100, from_start=False):
-        """ 
-        This gets data from local storage (data is stored in parquet files)
-        You can access this data by a % of the total data available in local storage
-        for the selected symbol and timeframe
-        You can access a % from the start or the end
-        """
-        path = f"Data/{self.symbol}/{self.symbol}_{self.timeframe}.parquet"
-        df = pd.read_parquet(path)
         n = int(len(df) * pct / 100)
-
         if from_start:
             df = df.head(n)
-
         else:
             df = df.tail(n)
 
@@ -510,7 +517,7 @@ class Optimizer:
     Optmizer works with random search
     """
 
-    def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params, max_candle, pip, asset, strategy):
+    def __init__(self, symbol, timeframe, pct, from_start, capital, risk, leverage, spread, commission, slippage, params, max_candle, pip, asset, strategy, host, database, user, password, start, end):
         self.params = params
         self.symbol = symbol
         self.timeframe = timeframe
@@ -527,6 +534,12 @@ class Optimizer:
         self.pip = pip 
         self.asset = asset
         self.strategy = strategy
+        self.host       = host
+        self.database   = database
+        self.user       = user
+        self.password   = password
+        self.start      = start
+        self.end        = end
 
     def grid_maker(self):
         """
@@ -600,6 +613,13 @@ class Optimizer:
 
         best_params = None
         best_score = -999999999999
+        feed = Data(self.symbol, self.timeframe)
+        df = feed.from_postgres(
+            self.start, self.end,
+            self.asset, self.host,
+            self.database, self.user, self.password,
+            self.pct, self.from_start
+        )
 
         for i in range(runs):
             indices = {}
@@ -609,24 +629,30 @@ class Optimizer:
 
             params = self.new_params(final_grid, indices)
             config = {
-            'symbol':     self.symbol,
-            'timeframe':  self.timeframe,
-            'pct':        self.pct,
-            'from_start': self.from_start,
-            'capital':    self.capital,
-            'risk':       self.risk,
-            'leverage':   self.leverage,
-            'spread':     self.spread,
-            'commission': self.commission,
-            'slippage':   self.slippage,
-            'params':     params,
-            'max_candle': self.max_candle,
-            'pip':        self.pip,
-            'asset':      self.asset,
-            'strategy':   self.strategy,
+                'symbol'    : self.symbol,
+                'timeframe' : self.timeframe,
+                'pct':        self.pct,
+                'from_start': self.from_start,
+                'capital'   : self.capital,
+                'risk'      : self.risk,
+                'leverage'  : self.leverage,
+                'spread'    : self.spread,
+                'commission': self.commission,
+                'slippage'  : self.slippage,
+                'params'    : params,
+                'max_candle': self.max_candle,
+                'pip'       : self.pip,
+                'asset'     : self.asset,
+                'strategy'  : self.strategy,
+                'host'      : self.host,
+                'database'  : self.database,
+                'user'      : self.user,
+                'password'  : self.password,
+                'start'     : self.start,
+                'end'       : self.end,
             }
             Exec = Execute(config)
-            score = Exec.run_for_optimizer()
+            score = Exec.run_for_optimizer(df)
 
             if score > best_score:
                 best_score = score
@@ -663,14 +689,18 @@ class Execute:
         self.pip = config['pip']
         self.asset = config['asset']
         self.strategy = config['strategy']
+        self.host     = config['host']
+        self.database = config['database']
+        self.user     = config['user']
+        self.password = config['password']
+        self.start    = config['start']
+        self.end      = config['end']
 
-    def run_for_optimizer(self):
+    def run_for_optimizer(self, df):
         """
         It Executes for the optmizer and 
         returns metric_for_optimizer()
         """
-        feed = Data(self.symbol, self.timeframe)
-        df = feed.data_from_local(pct=self.pct, from_start=self.from_start)
 
         test = self.strategy(df, self.params)
         results = test.signal()
@@ -691,7 +721,12 @@ class Execute:
         and equity_curve()
         """
         feed = Data(self.symbol, self.timeframe)
-        df = feed.data_from_local(pct=self.pct, from_start=self.from_start)
+        df = feed.from_postgres(
+            self.start, self.end,
+            self.asset, self.host,
+            self.database, self.user, self.password,
+            self.pct, self.from_start
+        )
 
         test = self.strategy(df, self.params)
         results = test.signal()
@@ -711,38 +746,50 @@ class Execute:
         Eval.monte_carlo(100)
 
     def run(self, runs):
-        Opt = Optimizer(self.symbol, self.timeframe, self.pct, self.from_start, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.params, self.max_candle, self.pip, self.asset, self.strategy)
+        Opt = Optimizer(
+            self.symbol, self.timeframe, self.pct, self.from_start,
+            self.capital, self.risk, self.leverage, self.spread, 
+            self.commission, self.slippage, self.params, self.max_candle, 
+            self.pip, self.asset, self.strategy, self.host, self.database, 
+            self.user, self.password, self.start, self.end)
+
         params, score = Opt.run(runs)
         print(params)
         print(score)
         self.pct = 100 - self.pct
         self.from_start = False
         config = {
-            'symbol':     self.symbol,
-            'timeframe':  self.timeframe,
+            'symbol'    : self.symbol,
+            'timeframe' : self.timeframe,
             'pct':        self.pct,
             'from_start': self.from_start,
-            'capital':    self.capital,
-            'risk':       self.risk,
-            'leverage':   self.leverage,
-            'spread':     self.spread,
+            'capital'   : self.capital,
+            'risk'      : self.risk,
+            'leverage'  : self.leverage,
+            'spread'    : self.spread,
             'commission': self.commission,
-            'slippage':   self.slippage,
-            'params':     params,
+            'slippage'  : self.slippage,
+            'params'    : params,
             'max_candle': self.max_candle,
-            'pip':        self.pip,
-            'asset':      self.asset,
-            'strategy':   self.strategy,
+            'pip'       : self.pip,
+            'asset'     : self.asset,
+            'strategy'  : self.strategy,
+            'host'      : self.host,
+            'database'  : self.database,
+            'user'      : self.user,
+            'password'  : self.password,
+            'start'     : self.start,
+            'end'       : self.end,
         }
         Exec = Execute(config)
         score = Exec.run_for_user()
 
-params_strategy = {
+params = {
     'ema_window':   [25, 50, 5],
 }
 
 config = {
-    'symbol':     'EURUSD',
+    'symbol':     'NZDUSD',
     'timeframe':  'M15',
     'pct':        75,
     'from_start': True,
@@ -752,11 +799,17 @@ config = {
     'spread':     0.5,
     'commission': 7,
     'slippage':   0.5,
-    'params':     params_strategy,
+    'params':     params,
     'max_candle': 1000,
     'pip':        0.0001,
     'asset':      'forex',
     'strategy': Strategy.Emacross,
+    'host'      : 'localhost',
+    'database'  : 'Data',
+    'user'      : 'postgres',
+    'password'  : '0000',
+    'start'     : datetime(2024, 1, 1),
+    'end'       : datetime(2026, 5, 1),
 }
 
 Exec = Execute(config)
