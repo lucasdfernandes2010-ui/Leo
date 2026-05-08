@@ -14,9 +14,8 @@ import time
 The name of this project is Leo
 
 Data Class:
-    data_from_api()
-    data_from_local()
-
+    from_postgres()
+    
 Strategy Class:
     signal()
 
@@ -51,7 +50,7 @@ Optimizer Class:
 
 class Data:
     """ 
-    Gets data from sources
+    Gets data from postgres database
     Returns a df(data) to Strategy Class
     """
 
@@ -90,6 +89,7 @@ class Data:
         df = pd.DataFrame(rows, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
         df = df.reset_index(drop=True)
         n = int(len(df) * pct / 100)
+
         if from_start:
             df = df.head(n)
         else:
@@ -101,10 +101,11 @@ class Data:
 
 class Backtest:
     """
-    It takes the df with signals given by Strategy class and backtests
-    with risk, leverage, capital, spread, and commision that can be modified
-    It gives a new df of trades backtested with entry, exit, size, 
-    capital(after trade), and candles to Evaluation Class
+    It takes the df with signals, tp, and sl given
+    by Strategy class and backtests
+    It gives a new df of trades backtested 
+    with entry, exit, size, capital(after trade),
+    and candles to Evaluation Class
     """
 
     def __init__(self, df, capital, risk, leverage, spread, commission, slippage, max_candle, pip, asset, symbol):
@@ -176,13 +177,17 @@ class Backtest:
             sl_pip = abs(entry - sl) / self.pip
 
             if self.usd_base:
-                pip_value = (self.pip / entry) * 100_000
+                pip_value = (self.pip * 100_000) / entry
             else:
                 pip_value = 10
 
-            max_lots = (self.capital * self.leverage) / (100_000 * entry)
+            if self.usd_base:   
+                max_lots = (self.capital * self.leverage) / 100_000
+            else:             
+                max_lots = (self.capital * self.leverage) / (100_000 * entry)
+
             lot_size = (self.capital * self.risk * self.leverage) / (sl_pip * pip_value)
-            lot_size = min(max_lots, lot_size)
+            lot_size = min(max_lots, lot_size)     
             return lot_size
 
         elif self.asset == 'equity':
@@ -242,15 +247,14 @@ class Backtest:
         Returns entry, exit, size, pnl, balance, candles to Backtest.run()
         """
         if self.asset == 'forex':
-            if self.usd_base:
-                pip_value = self.pip / exit_price
-            else:
-                pip_value = 1
 
-            if signal == 1:
-                pnl = (exit_price - entry) * size * 100_000 * pip_value
+            if signal == 1:#pnl in quote currency
+                pnl = (exit_price - entry) * size * 100_000 
             else:
-                pnl = (entry - exit_price) * size * 100_000 * pip_value
+                pnl = (entry - exit_price) * size * 100_000 
+
+            if self.usd_base:#pnl in usd
+                pnl = pnl / exit_price
 
         elif self.asset == 'equity':
             if signal == 1:
@@ -786,10 +790,12 @@ class Execute:
 
 params = {
     'ema_window':   [25, 50, 5],
+    'tp':           [20, 40, 5],
+    'sl':           [5, 40, 5]
 }
 
 config = {
-    'symbol':     'NZDUSD',
+    'symbol':     'EURUSD',
     'timeframe':  'M15',
     'pct':        75,
     'from_start': True,
@@ -803,14 +809,14 @@ config = {
     'max_candle': 1000,
     'pip':        0.0001,
     'asset':      'forex',
-    'strategy': Strategy.Emacross,
-    'host'      : 'localhost',
-    'database'  : 'Data',
-    'user'      : 'postgres',
-    'password'  : '0000',
-    'start'     : datetime(2024, 1, 1),
-    'end'       : datetime(2026, 5, 1),
+    'strategy':   Strategy.Emacross,
+    'host':       'localhost',
+    'database':   'Data',
+    'user':       'postgres',
+    'password':   '0000',
+    'start':      datetime(2024, 1, 1),
+    'end':        datetime(2026, 5, 1),
 }
 
 Exec = Execute(config)
-score = Exec.run(20)
+score = Exec.run(250)
