@@ -1,0 +1,8 @@
+pandas
+numpy
+matplotlib
+psycopg2-binary
+scipy
+ta
+python-dotenv
+MetaTrader5

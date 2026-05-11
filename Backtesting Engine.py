@@ -8,49 +8,17 @@ import matplotlib.cm as cm
 from datetime import datetime
 import psycopg2
 from scipy import stats
+from dotenv import load_dotenv
+import os
 import time
 
-"""
-The name of this project is Leo
-
-Data Class:
-    from_postgres()
-    
-Strategy Class:
-    signal()
-
-Backtest Class:
-    enter_trade()
-    position_sizing()
-    monitor_trade()
-    exit_trade()
-    run()
-    total_time()
-    total_candles()
-
-Evaluation Class:
-    metrics()
-    equity_curve()
-    metric_for_optimizer()
-    hypothesis_test()
-    monte_carlo()
-    benchmark()
-
-Execute Class:
-    run_for_optimizer()
-    run_for_user()
-
-Optimizer Class:
-    grid_maker()
-    new_params()
-    index_range()
-    run()
-
-"""
+load_dotenv()
 
 class Data:
     """ 
+    It gets its parameters from Execute class
     Gets data from postgres database
+
     Returns a df(data) to Strategy Class
     """
 
@@ -59,6 +27,13 @@ class Data:
         self.timeframe = timeframe
 
     def from_postgres(self, start, end, asset, host, database, user, password, pct, from_start):
+        """
+        It gets it parameters from Execute class
+        The time coloumn in database is in unix 
+        timestamp thats why we change it
+
+        It returns a df(data) to Strategy Class
+        """
 
         start = int(start.timestamp())
         end   = int(end.timestamp())
@@ -103,9 +78,12 @@ class Backtest:
     """
     It takes the df with signals, tp, and sl given
     by Strategy class and backtests
+    It takes its parameters from Execute class
+
     It gives a new df of trades backtested 
-    with entry, exit, size, capital(after trade),
-    and candles to Evaluation Class
+    to Evaluation Class
+    It also gives the total time and total 
+    number of candles backtested
     """
 
     def __init__(self, df, capital, risk, leverage, spread, commission, slippage, max_candle, pip, asset, symbol):
@@ -131,9 +109,10 @@ class Backtest:
     def enter_trade(self, i, signal):
         """
         It takes i(the candle u detect a trade opportunity)
-        It enters the trade 
+        It enters the trade(on the next candle which is i+1) 
         It adds spread and random slippage
-        It calculates entry, tp, sl
+
+        It returns entry, tp, sl
         """
         if self.asset == 'forex':
             spread = self.spread * self.pip
@@ -169,9 +148,9 @@ class Backtest:
     def position_sizing(self, entry, sl):
         """
         It takes entry and sl from enter_trade()
-        It calculates the lot size
-        Max_lots is calculated with risk and leverage
         Lot_size cannot be greater than max_lots
+
+        It returns lot size
         """
         if self.asset == 'forex':
             sl_pip = abs(entry - sl) / self.pip
@@ -200,11 +179,12 @@ class Backtest:
         """
         It takes entry, tp, sl from enter_trade()
         It takes lot_size from position_sizing()
-        It takes i from the for loop in Backtest.run()
+        It takes i, signal from the for loop in Backtest.run()
         It monitors the trade 
         If high of a candle is greater than tp, it counts it as a win
         If low if a candle is lesser than sl, it counts it as a loss
         If the trade didnt close after max_candle(int) candles, it closes
+
         It closes all trade with exit_trade()
         """
         for j in range(i + 1, len(self.df)):
@@ -244,6 +224,7 @@ class Backtest:
         It takes exit_price, j, i from monitor_trade
         It exits the trade
         Calculates the pnl(subtracts cost) and adds it to capital
+
         Returns entry, exit, size, pnl, balance, candles to Backtest.run()
         """
         if self.asset == 'forex':
@@ -281,6 +262,7 @@ class Backtest:
         It connects enter_trade(), position_sizing(), 
         monitor_trade, exit_trade() so they all work together
         It appends the trade data given by exit_trade() to a new df
+
         Returns the new df with the trade data
         """
         trades = []
@@ -315,7 +297,9 @@ class Backtest:
 class Evaluation:
     """
     It takes the df of trades, total candles, time in years
-    from Backtest class and returns metrics and graphs for
+    from Backtest class 
+
+    Returns metrics and graphs for
     Optimizer class and for the user
     """
 
@@ -324,16 +308,11 @@ class Evaluation:
         self.candles = candles
         self.years = years
 
-    def metrics(self, trade_type='both'):
+    def metrics(self):
         """
-        trade_type: 'both', 'long', 'short'
+        calculates basic metrics
         """
-        if trade_type == 'long':
-            df = self.trades[self.trades['signal'] == 1].reset_index(drop=True)
-        elif trade_type == 'short':
-            df = self.trades[self.trades['signal'] == -1].reset_index(drop=True)
-        else:
-            df = self.trades
+        df = self.trades
 
         total_trades = len(df)
         wins = df[df['pnl'] > 0]
@@ -343,27 +322,36 @@ class Evaluation:
         avg_win = wins['pnl'].mean()
         avg_loss = losses['pnl'].mean()
         loss_rate = 1 - (win_rate / 100)
-        expectancy = (win_rate / 100 * avg_win) + (loss_rate * avg_loss)
+
+        expectancy = df['pnl'].mean()
         breakeven_wr = abs(avg_loss) / (avg_win + abs(avg_loss)) * 100
         avg_candles = df['candles'].mean()
         trade_frequency = total_trades / self.years
         profitability_ratio = expectancy * trade_frequency
+        profit_factor = wins['pnl'].sum() / abs(losses['pnl'].sum())
 
         rolling_peak = df['balance'].cummax()
         drawdown_pct = (rolling_peak - df['balance']) / rolling_peak * 100
         max_drawdown_pct = drawdown_pct.max()
-        profit_factor = wins['pnl'].sum() / abs(losses['pnl'].sum())
+        
+        initial_balance = df['balance'].iloc[0] - df['pnl'].iloc[0]
+        below_initial = df[df['balance'] < initial_balance]['balance']
+        if len(below_initial) == 0:
+            max_loss = 0.0
+        else:
+            max_loss = ((below_initial.min() - initial_balance) / initial_balance) * 100
+
         df['returns'] = df['pnl'] / (df['balance'] - df['pnl'])
-        sharpe = (df['returns'].mean() / df['returns'].std()) * (len(df) ** 0.5)
-        max_loss = (losses['pnl'] / (df['balance'] - df['pnl'])).min() * 100
+        sharpe = (df['returns'].mean() / df['returns'].std()) * (self.years ** 0.5)
         downside_returns = df['returns'].copy()
         downside_returns[downside_returns > 0] = 0
         downside_std = (((downside_returns ** 2).mean()) ** 0.5)
-        sortino = (df['returns'].mean() / downside_std) * (len(df) ** 0.5)
+        sortino = (df['returns'].mean() / downside_std) * (self.years ** 0.5)
+
         var_95 = np.percentile(df['pnl'], 5)
         es_95 = df[df['pnl'] <= var_95]['pnl'].mean()
 
-        print(f"\n--- Metrics ({trade_type.upper()}) ---")
+        print(f"--- Metrics ---")
         print(f"Total Trades       : {total_trades}")
         print(f"Win Rate           : {win_rate:.2f}%")
         print(f"Total PnL          : {total_pnl:.2f} usd")
@@ -385,7 +373,6 @@ class Evaluation:
     def equity_curve(self):
         """
         It returns a graph of equity curve
-        (USD vs No. of Trades)
         """
         df = self.trades
         colour = 'green'
@@ -430,28 +417,29 @@ class Evaluation:
         p50 = np.percentile(final_balances, 50)
         p95 = np.percentile(final_balances, 95)
         prob_ruin = (final_balances < initial_balance).mean() * 100
-        avg_max_dd = max_drawdowns.mean()
-        worst_dd = max_drawdowns.max()
-
+        d5  = np.percentile(max_drawdowns, 5)
+        d50 = np.percentile(max_drawdowns, 50)
+        d95 = np.percentile(max_drawdowns, 95)
+        
         print(f"\n--- Monte Carlo ({simulations} simulations) ---")
         print(f"Initial Balance  : ${initial_balance:,.2f}")
-        print(f"Median Final     : ${p50:,.2f}")
-        print(f"5th Percentile   : ${p5:,.2f}")
-        print(f"95th Percentile  : ${p95:,.2f}")
+        print(f"Median Final Bal    : ${p50:,.2f}")
+        print(f"5th Percentile Bal   : ${p5:,.2f}")
+        print(f"95th Percentile Bal  : ${p95:,.2f}")
         print(f"Prob of Ruin     : {prob_ruin:.2f}%")
-        print(f"Avg Max Drawdown : {avg_max_dd:.2f}%")
-        print(f"Worst Drawdown   : {worst_dd:.2f}%")
+        print(f"Median MaxDD : {d50:.2f}%")
+        print(f"5th Percentile MaxDD   : {d5:,.2f}%")
+        print(f"95th Percentile MaxDD  : {d95:,.2f}%")
 
-    def benchmark(self, risk_free_rate):
+    def benchmark(self, rf):
         """
         Compares Leo's performance against a risk free rate benchmark
+        Right now risk free rate is hardcoded at 6%pa
         """
-        rf = risk_free_rate  # 4.5% annual risk free rate
-        initial_capital = self.trades['balance'].iloc[0] - self.trades['pnl'].iloc[0]
-        
-        risk_free_return = initial_capital * (rf * self.years)
-        leo_return = self.trades['pnl'].sum()
-        
+
+        initial_capital = self.trades['balance'].iloc[0] - self.trades['pnl'].iloc[0]        
+        risk_free_return = initial_capital * ((1 + rf) ** self.years - 1)
+        leo_return = self.trades['pnl'].sum()     
         outperformance = leo_return - risk_free_return
 
         print(f"\n--- Benchmark (Risk Free Rate) ---")
@@ -494,14 +482,7 @@ class Evaluation:
         df = self.trades
     
         total_trades = len(df)
-        wins = df[df['pnl'] > 0]
-        losses = df[df['pnl'] < 0]
-        win_rate = len(wins) / total_trades * 100
-        total_pnl = df['pnl'].sum()
-        avg_win = wins['pnl'].mean()
-        avg_loss = losses['pnl'].mean()
-        loss_rate = 1 - (win_rate / 100)
-        expectancy = (win_rate / 100 * avg_win) + (loss_rate * avg_loss)
+        expectancy = df['pnl'].mean()
         trade_frequency = total_trades / self.years
         profitability_ratio = expectancy * trade_frequency
 
@@ -516,7 +497,7 @@ class Optimizer:
     The values of Params is a list which work like
     [min, max, step] , this allows us to make a grid
     of parameters and check which combination from 
-    the grid returns the greatest metric_for_optimizer
+    the grid returns the greatest metric_for_optimizer()
 
     Optmizer works with random search
     """
@@ -616,7 +597,7 @@ class Optimizer:
         ranges = self.index_range(final_grid)
 
         best_params = None
-        best_score = -999999999999
+        best_score = -1e+20
         feed = Data(self.symbol, self.timeframe)
         df = feed.from_postgres(
             self.start, self.end,
@@ -668,13 +649,18 @@ class Optimizer:
 
 class Execute:
     """
+    The user directly contacts Execute class
+    and does not need to see the other classes
     It connects Data class , Strategy class
     Backtest class and Evaluation class to 
     run together
     It makes it easier for the optmizer and 
     the user to Backtest
-    It takes all the parameters the other 
+    It gives all the parameters the other 
     classes take
+
+    It takes data from config and params
+    which are given by the user
     """
 
     def __init__(self, config):
@@ -721,8 +707,7 @@ class Execute:
     def run_for_user(self):
         """
         It Executes for the user and returns
-        simple_metric(), advanced_metric(),
-        and equity_curve()
+        useful metrics and graphs
         """
         feed = Data(self.symbol, self.timeframe)
         df = feed.from_postgres(
@@ -741,15 +726,26 @@ class Execute:
         years = backtest.total_time()
         
         Eval = Evaluation(backtest_results, candles, years)
-        #Eval.metrics('both')
-        #Eval.metrics('long')
-        Eval.metrics('short')
+        Eval.metrics()
         Eval.equity_curve()
         Eval.benchmark(0.05)
         Eval.hypothesis_test()
         Eval.monte_carlo(100)
 
     def run(self, runs):
+        """
+        It connects run_for_optimizer() and
+        run_for_user() . This function gets both
+        the best params and the backtest user wants
+
+        For the optimizer it backtest on the first 
+        self.pct% data from_start and for the user 
+        it backtests on the remaining data not seen by
+        the optimizer . If self.pct is 75 and from_start 
+        is True , then the optimizer will backtest on 
+        the first 75% of the data and the user will
+        backtest on the remaining 25% data from the end
+        """
         Opt = Optimizer(
             self.symbol, self.timeframe, self.pct, self.from_start,
             self.capital, self.risk, self.leverage, self.spread, 
@@ -790,8 +786,7 @@ class Execute:
 
 params = {
     'ema_window':   [25, 50, 5],
-    'tp':           [20, 40, 5],
-    'sl':           [5, 40, 5]
+    'tp':           [15, 30, 5],
 }
 
 config = {
@@ -810,13 +805,13 @@ config = {
     'pip':        0.0001,
     'asset':      'forex',
     'strategy':   Strategy.Emacross,
-    'host':       'localhost',
-    'database':   'Data',
-    'user':       'postgres',
-    'password':   '0000',
+    'host'      : os.getenv('DB_HOST'),
+    'database'  : os.getenv('DB_DATABASE'),
+    'user'      : os.getenv('DB_USER'),
+    'password'  : os.getenv('DB_PASSWORD'),
     'start':      datetime(2024, 1, 1),
     'end':        datetime(2026, 5, 1),
 }
 
 Exec = Execute(config)
-score = Exec.run(250)
+score = Exec.run(50)

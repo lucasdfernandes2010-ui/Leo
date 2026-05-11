@@ -1,22 +1,32 @@
 import ta
 import pandas as pd 
 
+""" Each strategy has its own class
+    The strategy takes data from
+    Data class and adds a column of 
+    signal in the form of [-1, 0, 1]
+    -1 --> short
+    0 ---> do nothing
+    1 ---> long
+    It also gives columns of tp and sl
+    with signal which are added to the
+    dataframe given by Data class
+
+    This modified df is given to 
+    Backtest class"""
+
 class Emacross:
     """
     EMA Crossover Strategy — Short Only
-    
     Signal: Price crosses below EMA from above (bearish crossover)
-    Exit: TP/SL in pips
-    
-    Best Params: {'ema_window': 45}
-    Timeframe: M15
+    Exit: Defined TP/SL 
     """
 
     def __init__(self, df, params):
         self.df = df
         self.ema_window = params['ema_window']
         self.tp = params['tp']
-        self.sl = params['sl']
+        self.sl = params['tp']
 
     def signal(self):
         df = self.df 
@@ -30,9 +40,7 @@ class Emacross:
 
 class MeanReversion:#bad strategy
     """
-    This is a MeanReversion Strategy
-    It takes data in the form of df by Data class
-    It also takes params(a dict with keys and values in the form of a single number)
+    strategy
     """
     
     def __init__(self, df, params):
@@ -45,11 +53,6 @@ class MeanReversion:#bad strategy
         self.max_candle = params['max_candle']
 
     def signal(self):
-        """
-        It adds a new column(signal) and tp_pip, sl_pip, max_candle to the original df 
-        Signal is a column of true and false, true meaning enter the trade in the next open candle
-        and false means to do nothing
-        """
         df = self.df
         df['sma'] = ta.trend.sma_indicator(df['close'], window=self.sma_window)
         df['std'] = df['close'].rolling(window=self.std_window).std()
