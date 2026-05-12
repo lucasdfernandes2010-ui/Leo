@@ -99,14 +99,12 @@ class Backtest:
         self.lows     = df['low'].values
         self.opens    = df['open'].values
         self.signals  = df['signal'].values
-        self.tp     = df['tp'].iloc[0]
-        self.sl = df['sl'].iloc[0]
         self.max_candle = max_candle
         self.asset = asset
         self.symbol = symbol
         self.usd_base = self.symbol[:3] == 'USD'
 
-    def enter_trade(self, i, signal):
+    def enter_trade(self, i, signal, tp, sl):
         """
         It takes i(the candle u detect a trade opportunity)
         It enters the trade(on the next candle which is i+1) 
@@ -120,12 +118,12 @@ class Backtest:
             entry = self.opens[i + 1] + spread + slippage
 
             if signal == 1:
-                tp = entry + self.tp * self.pip
-                sl = entry - self.sl * self.pip
+                tp = entry + tp * self.pip
+                sl = entry - sl * self.pip
 
             else:
-                tp = entry - self.tp * self.pip
-                sl = entry + self.sl * self.pip
+                tp = entry - tp * self.pip
+                sl = entry + sl * self.pip
             
             return entry, sl, tp
 
@@ -136,12 +134,12 @@ class Backtest:
             entry = self.opens[i + 1] + spread + slippage
 
             if signal == 1:  
-                tp = entry * ((100 + self.tp) / 100)
-                sl = entry * ((100 - self.sl) / 100)
+                tp = entry * ((100 + tp) / 100)
+                sl = entry * ((100 - sl) / 100)
 
             else:
-                tp = entry * ((100 - self.tp) / 100)
-                sl = entry * ((100 + self.sl) / 100)
+                tp = entry * ((100 - tp) / 100)
+                sl = entry * ((100 + sl) / 100)
             
             return entry, sl, tp
 
@@ -266,10 +264,14 @@ class Backtest:
         Returns the new df with the trade data
         """
         trades = []
+        tp_arr = self.df['tp'].values
+        sl_arr = self.df['sl'].values
         for i in range(len(self.df) - 1):
             signal = self.signals[i]
+            tps = tp_arr[i]
+            sls = sl_arr[i]
             if signal == 1 or signal == -1:
-                entry, sl, tp = self.enter_trade(i, signal)
+                entry, sl, tp = self.enter_trade(i, signal, tps, sls)
                 size = self.position_sizing(entry, sl)
                 trade = self.monitor_trade(i, entry, tp, sl, size, signal)
                 if trade:
@@ -342,11 +344,11 @@ class Evaluation:
             max_loss = ((below_initial.min() - initial_balance) / initial_balance) * 100
 
         df['returns'] = df['pnl'] / (df['balance'] - df['pnl'])
-        sharpe = (df['returns'].mean() / df['returns'].std()) * (self.years ** 0.5)
+        sharpe = (df['returns'].mean() / df['returns'].std()) * (trade_frequency ** 0.5)
         downside_returns = df['returns'].copy()
-        downside_returns[downside_returns > 0] = 0
+        downside_returns = df['returns'].clip(upper=0)
         downside_std = (((downside_returns ** 2).mean()) ** 0.5)
-        sortino = (df['returns'].mean() / downside_std) * (self.years ** 0.5)
+        sortino = (df['returns'].mean() / downside_std) * (trade_frequency ** 0.5)
 
         var_95 = np.percentile(df['pnl'], 5)
         es_95 = df[df['pnl'] <= var_95]['pnl'].mean()
@@ -785,13 +787,12 @@ class Execute:
         score = Exec.run_for_user()
 
 params = {
-    'ema_window':   [25, 50, 5],
-    'tp':           [15, 30, 5],
+    'tp':         [10, 50, 5],
 }
 
 config = {
     'symbol':     'EURUSD',
-    'timeframe':  'M15',
+    'timeframe':  'H1',
     'pct':        75,
     'from_start': True,
     'capital':    100_000,
@@ -804,14 +805,14 @@ config = {
     'max_candle': 1000,
     'pip':        0.0001,
     'asset':      'forex',
-    'strategy':   Strategy.Emacross,
+    'strategy':   Strategy.BullishEngulfing,
     'host'      : os.getenv('DB_HOST'),
     'database'  : os.getenv('DB_DATABASE'),
     'user'      : os.getenv('DB_USER'),
     'password'  : os.getenv('DB_PASSWORD'),
-    'start':      datetime(2024, 1, 1),
+    'start':      datetime(2015, 1, 1),
     'end':        datetime(2026, 5, 1),
 }
 
 Exec = Execute(config)
-score = Exec.run(50)
+score = Exec.run(1000)
