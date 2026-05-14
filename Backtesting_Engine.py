@@ -608,13 +608,19 @@ class Optimizer:
             self.pct, self.from_start
         )
 
+        test = self.strategy(df)
+        new_df = test.indicator()
+
+
         for i in range(runs):
             indices = {}
+
             for key in ranges:
                 random_index = random.choice(ranges[key])
                 indices[key] = random_index
 
             params = self.new_params(final_grid, indices)
+
             config = {
                 'symbol'    : self.symbol,
                 'timeframe' : self.timeframe,
@@ -638,8 +644,9 @@ class Optimizer:
                 'start'     : self.start,
                 'end'       : self.end,
             }
+
             Exec = Execute(config)
-            score = Exec.run_for_optimizer(df)
+            score = Exec.run_for_optimizer(new_df)
 
             if score > best_score:
                 best_score = score
@@ -694,8 +701,8 @@ class Execute:
         returns metric_for_optimizer()
         """
 
-        test = self.strategy(df, self.params)
-        results = test.signal()
+        test = self.strategy(df)
+        results = test.signal(self.params)
 
         backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.max_candle, self.pip, self.asset, self.symbol)
         backtest_results = backtest.run()
@@ -719,8 +726,11 @@ class Execute:
             self.pct, self.from_start
         )
 
-        test = self.strategy(df, self.params)
-        results = test.signal()
+        ind = self.strategy(df)
+        new_df = ind.indicator()
+
+        test = self.strategy(new_df)
+        results = test.signal(self.params)
 
         backtest = Backtest(results, self.capital, self.risk, self.leverage, self.spread, self.commission, self.slippage, self.max_candle, self.pip, self.asset, self.symbol)
         backtest_results = backtest.run()
@@ -787,9 +797,9 @@ class Execute:
         score = Exec.run_for_user()
 
 params = {
+    'ema_window': [25, 50, 5],
     'tp':         [10, 50, 5],
 }
-
 config = {
     'symbol':     'EURUSD',
     'timeframe':  'H1',
@@ -805,7 +815,7 @@ config = {
     'max_candle': 1000,
     'pip':        0.0001,
     'asset':      'forex',
-    'strategy':   Strategy.BullishEngulfing,
+    'strategy':   Strategy.Emacross2,
     'host'      : os.getenv('DB_HOST'),
     'database'  : os.getenv('DB_DATABASE'),
     'user'      : os.getenv('DB_USER'),
@@ -815,4 +825,4 @@ config = {
 }
 
 Exec = Execute(config)
-score = Exec.run(1000)
+score = Exec.run(150)

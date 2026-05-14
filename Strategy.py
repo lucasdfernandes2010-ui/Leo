@@ -15,7 +15,7 @@ import pandas as pd
     This modified df is given to 
     Backtest class"""
 
-class Emacross:
+class Emacross1:
     """
     EMA Crossover Strategy — Short Only
     Signal: Price crosses below EMA from above (bearish crossover)
@@ -66,13 +66,19 @@ class Emacross:
     [Finished in 72.4s]
     """
 
-    def __init__(self, df, params):
+    def __init__(self, df):
         self.df = df
+
+    def indicator(self):
+        df = self.df
+
+        return df
+
+    def signal(self, params):
         self.ema_window = params['ema_window']
         self.tp = params['tp']
         self.sl = params['tp']
 
-    def signal(self):
         df = self.df 
         df['ema50'] = ta.trend.ema_indicator(df['close'], window=self.ema_window)
         df['signal'] = 0
@@ -81,83 +87,41 @@ class Emacross:
         df['sl'] = self.sl
         return df 
 
-class MeanReversion:#bad strategy
+class Emacross2:
     """
-    strategy
+    EMA Crossover Strategy — Short Only
+
+    Signal : Price crosses below EMA + MFI between mfi1 and mfi2
+    Exit   : TP/SL 1:1 RR, MFI window fixed at 14
+
+    Params : ema_window, mfi1, mfi2, tp
     """
-    
-    def __init__(self, df, params):
+
+    def __init__(self, df):
         self.df = df
-        self.sma_window = params['sma_window']
-        self.entry_std = params['entry_std']
+        self.mfi_window = 14
 
-    def signal(self):
+    def indicator(self):#indicators which do not change with params 
         df = self.df
-        df['sma'] = ta.trend.ema_indicator(df['close'], window=self.sma_window)
-        df['std'] = df['close'].rolling(window=14).std()
+        df['mfi'] = ta.volume.money_flow_index(df['high'], df['low'], df['close'], df['volume'], window=self.mfi_window)
 
-        df['entry'] = df['sma'] - self.entry_std * df['std']
-        df['signal'] = 0
-        df.loc[(df['entry'] > df['close']) & (df['close'].shift(1) > df['entry'].shift(1)), 'signal'] = 1
-        df['tp'] = (df['sma'] - df['entry']) / 0.0001
-        df['sl'] = df['tp']  
         return df
 
-
-class ThreeGreenCandles:
-    """
-    Three Green Candles Strategy — Long Only
-    Signal: Three consecutive bullish (green) candles
-    Exit: Fixed TP/SL, 1:1 RR
-    """
-
-    def __init__(self, df, params):
-        self.df = df
+    def signal(self, params):#indicators that do change with params
+        self.ema_window = params['ema_window']
+        self.mfi1 = 0
+        self.mfi2 = 100
         self.tp = params['tp']
-        self.sl = params['tp']
+        self.sl = params['tp'] 
 
-    def signal(self):
         df = self.df
+        df['ema'] = ta.trend.ema_indicator(df['close'], window=self.ema_window)
         df['signal'] = 0
 
-        green = df['close'] > df['open']
+        ema_cross = (df['close'] > df['ema']) & (df['close'].shift(1) < df['ema'].shift(1))
+        mfi_filter = (df['mfi'] >= self.mfi1) & (df['mfi'] <= self.mfi2)
 
-        df.loc[
-            green &
-            green.shift(1) &
-            green.shift(2),
-            'signal'
-        ] = 1
-
-        df['tp'] = self.tp
-        df['sl'] = self.sl
-        return df
-
-
-class BullishEngulfing:
-    """
-    Bullish Engulfing Strategy — Long Only
-    Signal: Bullish engulfing candle while price is above VWAP
-    Exit: Fixed TP/SL, 1:1 RR
-    """
-
-    def __init__(self, df, params):
-        self.df = df
-        self.tp = params['tp']
-        self.sl = params['tp']
-
-    def signal(self):
-        df = self.df
-
-        df['vwap'] = (df['volume'] * (df['high'] + df['low'] + df['close']) / 3).cumsum() / df['volume'].cumsum()
-
-        prev_bearish = df['close'].shift(1) < df['open'].shift(1)
-        curr_bullish = df['close'] > df['open']
-        engulfs      = (df['close'] > df['open'].shift(1)) & (df['open'] < df['close'].shift(1))
-        above_vwap   = df['close'] > df['vwap']
-
-        df['signal'] = 0
-        df.loc[prev_bearish & curr_bullish & engulfs & above_vwap, 'signal'] = 1
+        df.loc[ema_cross & mfi_filter, 'signal'] = 1
 
         df['tp'] = self.tp
         df['sl'] = self.sl
